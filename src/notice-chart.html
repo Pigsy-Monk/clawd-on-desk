@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:">
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  user-select: none;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+body { padding: 6px; }
+
+:root {
+  --ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
+  --card-bg: rgba(255, 255, 255, 0.96);
+  --card-border: rgba(0, 0, 0, 0.08);
+  --card-shadow: 0 4px 16px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.08);
+  --card-inset: none;
+  --text-main: #18181b;
+  --text-muted: #71717a;
+  --header-color: #374151;
+  --level-info: #5b8dd9;
+  --level-success: #5a9e6f;
+  --level-warn: #d97757;
+  --level-error: #d15a5a;
+  --dismiss-color: #71717a;
+  --dismiss-hover-bg: rgba(0, 0, 0, 0.06);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --card-bg: rgba(24, 24, 27, 0.92);
+    --card-border: rgba(255, 255, 255, 0.1);
+    --card-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+    --card-inset: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    --text-main: #f4f4f5;
+    --text-muted: #a1a1aa;
+    --header-color: #e4e4e7;
+    --dismiss-color: #a1a1aa;
+    --dismiss-hover-bg: rgba(255, 255, 255, 0.1);
+  }
+}
+
+/* One card, one picture: the same rounded card the notice stack uses, sized by
+   its content and reported back to main so the window can match it. */
+.card {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+  padding: 12px 16px;
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 16px;
+  box-shadow: var(--card-shadow), var(--card-inset, none);
+  color: var(--text-main);
+  opacity: 0;
+  transform: scale(0.97);
+  transition: opacity 0.25s var(--ease-spring), transform 0.25s var(--ease-spring);
+}
+.card.visible {
+  opacity: 1;
+  transform: scale(1);
+}
+.card.hiding {
+  opacity: 0;
+  transform: scale(0.97);
+}
+
+/* Level color bar: the only per-level chrome, so the card stays calm. */
+.level-bar {
+  flex: 0 0 auto;
+  width: 4px;
+  border-radius: 2px;
+  background: var(--level-color, var(--level-info));
+}
+.card[data-level="info"] { --level-color: var(--level-info); }
+.card[data-level="success"] { --level-color: var(--level-success); }
+.card[data-level="warn"] { --level-color: var(--level-warn); }
+.card[data-level="error"] { --level-color: var(--level-error); }
+
+.copy {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+  /* Keep the first line clear of the dismiss button in the top-right corner. */
+  padding-right: 10px;
+}
+.title {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--header-color);
+  letter-spacing: 0.02em;
+  overflow-wrap: anywhere;
+}
+.title:empty { display: none; }
+
+/* The chart is never blown up past its own pixels: max-width keeps a wide
+   source inside the card, and the intrinsic size keeps a narrow one honest. */
+.chart {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+}
+.chart[hidden] { display: none; }
+
+.card-dismiss {
+  position: absolute;
+  top: 5px;
+  right: 6px;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dismiss-color);
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.3;
+  transition: opacity 0.15s ease, background-color 0.15s ease, color 0.15s ease;
+}
+.card:hover .card-dismiss { opacity: 1; }
+.card-dismiss:hover {
+  background: var(--dismiss-hover-bg);
+  color: var(--text-main);
+}
+</style>
+</head>
+<body>
+<div class="card" id="card">
+  <div class="level-bar"></div>
+  <div class="copy">
+    <div class="title" id="title"></div>
+    <img class="chart" id="chart" alt="" hidden>
+  </div>
+  <button type="button" class="card-dismiss" id="dismiss" aria-label="Close">&#215;</button>
+</div>
+<script>
+const card = document.getElementById("card");
+const titleEl = document.getElementById("title");
+const chartEl = document.getElementById("chart");
+const dismissEl = document.getElementById("dismiss");
+
+const LEVELS = new Set(["info", "success", "warn", "error"]);
+
+function levelOf(notice) {
+  const level = notice && notice.level;
+  return LEVELS.has(level) ? level : "info";
+}
+
+// The image is the thing that decides the card's height, so the report rides
+// the frame after the image has been laid out — on load, on a decode failure
+// (the card is then just the title), and once up front for the no-image case.
+function reportHeight() {
+  requestAnimationFrame(() => {
+    const height = card.offsetHeight + 12;
+    if (height > 12) window.noticeChartAPI.reportHeight(height);
+  });
+}
+
+// Every notice string is written with textContent, and the PNG is the only
+// string handed to an attribute: the store already verified those bytes are a
+// real PNG under its byte cap, so the data: URI is the one value that may
+// reach the image loader. Nothing notice-derived ever reaches the HTML parser.
+function show(payload) {
+  const notice = payload && typeof payload === "object" ? payload : {};
+  titleEl.textContent = notice.title ? String(notice.title) : "";
+  card.dataset.level = levelOf(notice);
+
+  const image = notice.image && typeof notice.image === "object" ? notice.image : null;
+  const data = image && typeof image.data === "string" ? image.data : "";
+  if (data) {
+    chartEl.hidden = false;
+    chartEl.onload = reportHeight;
+    chartEl.onerror = reportHeight;
+    chartEl.src = "data:image/png;base64," + data;
+  } else {
+    chartEl.hidden = true;
+    chartEl.removeAttribute("src");
+  }
+
+  card.classList.remove("hiding");
+  card.classList.add("visible");
+  reportHeight();
+}
+
+function hide() {
+  card.classList.remove("visible");
+  card.classList.add("hiding");
+}
+
+dismissEl.addEventListener("click", (event) => {
+  event.stopPropagation();
+  window.noticeChartAPI.close();
+});
+
+// The card fills the window, so this only catches a click on the transparent
+// margin around it; a click outside the window entirely is main's blur path.
+document.addEventListener("click", (event) => {
+  if (card.contains(event.target)) return;
+  window.noticeChartAPI.close();
+});
+
+// Same story as the click above: a focusable:false window never receives key
+// events, so main's before-input-event is the path that would ever see this.
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+  window.noticeChartAPI.close();
+});
+
+window.noticeChartAPI.onShow(show);
+window.noticeChartAPI.onHide(hide);
+</script>
+</body>
+</html>

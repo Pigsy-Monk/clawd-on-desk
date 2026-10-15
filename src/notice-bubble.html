@@ -1,0 +1,900 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  user-select: none;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+/* The card's hard shadow hangs 2px off its right and bottom edges, and the tail
+   hangs off the edge the pet is on. Both would be clipped by the stack, which
+   is a scroll container, so the strip they need is padding on the stack itself
+   — inside the clip. It is sized here, next to the tail side that decides it,
+   and reportHeight measures the stack, so the window grows to fit whatever the
+   strip takes. */
+body {
+  --gutter-top: 4px;
+  --gutter-right: 4px;
+  --gutter-bottom: 4px;
+  --gutter-left: 4px;
+  padding: 6px;
+}
+body[data-tail="top"] { --gutter-top: 20px; }
+body[data-tail="bottom"] { --gutter-bottom: 20px; }
+body[data-tail="left"] { --gutter-left: 20px; }
+body[data-tail="right"] { --gutter-right: 20px; }
+
+:root {
+  --ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-back: cubic-bezier(0.68, -0.55, 0.265, 1.55);
+  --ease-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
+  /* The card speaks the pet's language: one flat fill, one thick pure-black
+     outline, one hard offset shadow. No gradients, no hairlines, no blur. */
+  --card-fill: #DE886D;
+  --text-main: #3a3a42;
+  --text-muted: rgba(26, 26, 31, 0.72);
+  --header-color: #1a1a1f;
+  --level-info: #4c8ddf;
+  --level-success: #3f8a58;
+  --level-warn: #c96540;
+  --level-error: #c04545;
+  /* Trend series colors. Deliberately mid-tone: the same six values stay
+     legible on every theme's fill, so they are defined once here and never
+     re-tuned per theme. */
+  --series-1: #4c8ddf;
+  --series-2: #d97757;
+  --series-3: #4f9e6b;
+  --series-4: #9a6ee0;
+  --series-5: #c99a3c;
+  --series-6: #3f9c9c;
+  --dismiss-color: rgba(26, 26, 31, 0.6);
+  --dismiss-hover-bg: rgba(26, 26, 31, 0.12);
+  --scroll-thumb: rgba(0, 0, 0, 0.15);
+  --scroll-thumb-hover: rgba(0, 0, 0, 0.25);
+}
+
+/* The card paints its own opaque fill and keeps its text dark whatever the
+   system does, so only the scrollbar — which sits on the transparent window,
+   over whatever is behind it — still follows the system theme. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --scroll-thumb: rgba(255, 255, 255, 0.1);
+    --scroll-thumb-hover: rgba(255, 255, 255, 0.2);
+  }
+}
+
+/* Oldest → newest, top to bottom: the newest card sits closest to the pet.
+   Card spacing is a margin rather than a flex gap so a collapsing card can
+   give its whole slot back (height, padding, border and margin) and let the
+   survivors slide up without a snap when it is finally removed. */
+.stack {
+  display: flex;
+  flex-direction: column;
+  padding: var(--gutter-top) var(--gutter-right) var(--gutter-bottom) var(--gutter-left);
+  /* Root CSS zoom leaves vh tied to the unzoomed BrowserWindow. Divide by the
+     injected text scale so the painted stack still fits the actual window; a
+     taller stack scrolls here instead of spilling past the display. */
+  max-height: calc(100vh / var(--clawd-text-zoom, 1) - 12px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  opacity: 0;
+  transform: translateX(60px);
+  transition: opacity 0.35s var(--ease-spring), transform 0.4s var(--ease-spring);
+}
+.stack.visible {
+  opacity: 1;
+  transform: translateX(0);
+}
+.stack.hiding {
+  opacity: 0;
+  transform: translateX(60px);
+}
+.stack::-webkit-scrollbar { width: 6px; }
+.stack::-webkit-scrollbar-track { background: transparent; }
+.stack::-webkit-scrollbar-thumb { background: var(--scroll-thumb); border-radius: 3px; }
+.stack::-webkit-scrollbar-thumb:hover { background: var(--scroll-thumb-hover); }
+
+.card {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+  padding: 12px 16px;
+  background: var(--card-fill, #DE886D);
+  border: 2.5px solid #000;
+  border-radius: 9px;
+  box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.22);
+  color: var(--text-main);
+  /* Not clipped: the tail hangs off the edge. The collapse animation pins its
+     own overflow while it runs. */
+  overflow: visible;
+}
+/* The fill comes from the active theme, so the card always matches the sprite
+   it is speaking for. An unknown theme keeps the fallback above. */
+.card[data-theme="clawd"]     { --card-fill: #DE886D; }
+.card[data-theme="calico"]    { --card-fill: #E8A354; }
+.card[data-theme="cloudling"] { --card-fill: #B1A7FF; }
+.card + .card { margin-top: 8px; }
+/* A card on its way out must not answer clicks while it collapses. */
+.card.leaving { pointer-events: none; }
+/* First render of a notice only: the overshoot is the "something alive just
+   arrived" cue, and a re-render (or a reorder) must not fire it again. */
+.card.entering { animation: card-enter 400ms var(--ease-bounce); }
+@keyframes card-enter {
+  from { transform: translateX(16px) scale(0.94); opacity: 0; }
+  to { transform: translateX(0) scale(1); opacity: 1; }
+}
+
+/* Two dot eyes in the same pen as the outline, top-left — never top-right,
+   where the dismiss × lives. */
+.card-eyes {
+  position: absolute;
+  top: 7px;
+  left: 8px;
+  display: none;
+  gap: 8px;
+  transition: transform 200ms var(--ease-spring);
+}
+.card[data-eyes="on"] .card-eyes { display: flex; }
+/* The gaze is asymmetric on purpose: 1px toward the pet reads as looking at
+   something, dead centre reads as a stare. A vertical side is ambiguous, so it
+   stays centred. */
+.card[data-gaze="left"] .card-eyes { transform: translateX(-1px); }
+.card[data-gaze="right"] .card-eyes { transform: translateX(1px); }
+.eye {
+  width: 4px;
+  height: 4px;
+  border: 2.5px solid #000;
+  border-radius: 50%;
+  background: transparent;
+  animation: card-blink 2.1s infinite;
+}
+/* Closed for the last 14% of every 2.1s cycle: nearly subliminal, but a pair
+   that never blinks reads as a stare. */
+@keyframes card-blink {
+  0%, 85% { clip-path: inset(0); }
+  86%, 100% { clip-path: inset(45% 0); }
+}
+
+/* Level color bar: the only per-level chrome, so the stack stays calm. */
+.level-bar {
+  flex: 0 0 auto;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--level-color, var(--level-info));
+}
+.card[data-level="info"] { --level-color: var(--level-info); }
+.card[data-level="success"] { --level-color: var(--level-success); }
+.card[data-level="warn"] { --level-color: var(--level-warn); }
+.card[data-level="error"] { --level-color: var(--level-error); }
+
+/* The level in shape as well as colour: a level tint on a tinted fill is easy
+   to miss, so the glyph has to carry the level on its own. It leads the title
+   line rather than sitting in the top-right corner, where a cross would read as
+   a second dismiss button. */
+.level-glyph {
+  margin-right: 5px;
+  color: var(--header-color);
+  opacity: 0.5;
+}
+
+/* The tail: three tapering circles on the edge that faces the pet, curving
+   away from the card in the card's own outline and fill. Only ever shown for a
+   short stack. */
+.tail {
+  position: absolute;
+  display: block;
+  pointer-events: none;
+}
+.tail circle {
+  fill: var(--card-fill, #DE886D);
+  stroke: #000;
+  stroke-width: 2.5;
+}
+/* Two nested groups so the entrance wiggle and the level pose can both own a
+   transform without fighting the mirror/rotation that places the tail. Both
+   pivot on the circle nearest the card, where the tail attaches. */
+.tail-swing,
+.tail-pose {
+  transform-box: view-box;
+  transform-origin: 5px 5px;
+}
+/* One second of wiggle on arrival, then it holds still: a tail that wiggles
+   forever is infuriating. */
+.tail-swing { animation: tail-wiggle 1000ms var(--ease-back) 1 forwards; }
+@keyframes tail-wiggle {
+  0% { transform: rotate(0deg); }
+  25% { transform: rotate(-14deg); }
+  50% { transform: rotate(0deg); }
+  75% { transform: rotate(10deg); }
+  100% { transform: rotate(0deg); }
+}
+/* The pose the tail settles into: perked for good news, drooped for bad, and a
+   slow sway for a warning that is still unresolved. */
+.tail-pose { transition: transform 400ms var(--ease-spring); }
+.card[data-level="success"] .tail-pose { transform: rotate(28deg); }
+.card[data-level="error"] .tail-pose { transform: rotate(-28deg); }
+.card[data-level="warn"] .tail-pose { animation: tail-sway 500ms ease-in-out 1000ms infinite; }
+@keyframes tail-sway {
+  0%, 100% { transform: rotate(-12deg); }
+  50% { transform: rotate(12deg); }
+}
+.card[data-tail="bottom"] .tail { top: calc(100% + 2px); left: 40px; }
+.card[data-tail="top"] .tail { bottom: calc(100% + 2px); left: 40px; transform: scaleY(-1); }
+.card[data-tail="right"] .tail {
+  left: calc(100% + 2px);
+  top: 40px;
+  transform-origin: 0 0;
+  transform: rotate(-90deg);
+}
+.card[data-tail="left"] .tail {
+  right: calc(100% + 2px);
+  top: 40px;
+  transform-origin: 100% 0;
+  transform: rotate(90deg);
+}
+
+/* Nothing above moves for a reader who asked for stillness. The tail keeps its
+   static level pose: a held angle is not motion. */
+@media (prefers-reduced-motion: reduce) {
+  .card.entering { animation: none; }
+  .tail-swing,
+  .tail-pose { animation: none; transition: none; }
+  .eye { animation: none; }
+  .card[data-eyes="on"] .card-eyes { display: none; }
+}
+
+.copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 auto;
+  min-width: 0;
+  /* Keep the first line clear of the dismiss button in the top-right corner. */
+  padding-right: 10px;
+}
+.title {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--header-color);
+  letter-spacing: 0.02em;
+  overflow-wrap: anywhere;
+}
+.body {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-main);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* One row per trend series: name, sparkline, current reading. */
+.series {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.series-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sparkline {
+  flex: 0 0 auto;
+  display: block;
+}
+.series-reading {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
+  font-variant-numeric: tabular-nums;
+}
+.series-value {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+.series-unit {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+.series-unit:empty { display: none; }
+
+/* Subtle at rest, clear on hover: the whole card is the hit target for a text
+   notice, so the × only has to be discoverable, never loud. */
+.card-dismiss {
+  position: absolute;
+  top: 5px;
+  right: 6px;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dismiss-color);
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.3;
+  transition: opacity 0.15s ease, background-color 0.15s ease, color 0.15s ease;
+}
+.card:hover .card-dismiss { opacity: 1; }
+.card-dismiss:hover {
+  background: var(--dismiss-hover-bg);
+  color: var(--text-main);
+}
+</style>
+</head>
+<body>
+<div class="stack" id="stack"></div>
+<script>
+const stack = document.getElementById("stack");
+
+const LEVELS = new Set(["info", "success", "warn", "error"]);
+// Level, spelled out in a shape so it survives a fill that swallows the tint:
+// an "info" bar on a terracotta card is a whisper, the glyph is not.
+const LEVEL_GLYPHS = { info: "ℹ", success: "✓", warn: "⚠", error: "✗" };
+const SVG_NS = "http://www.w3.org/2000/svg";
+const SPARK_WIDTH = 72;
+const SPARK_HEIGHT = 26;
+const SPARK_PAD = 2;
+// Must stay in step with the transition the collapse sets below.
+const EXIT_MS = 200;
+const EXIT_EASE = "cubic-bezier(0.4, 0, 0.2, 1)";
+const SERIES_VARS = ["--series-1", "--series-2", "--series-3", "--series-4", "--series-5", "--series-6"];
+const SERIES_FALLBACK = ["#4c8ddf", "#d97757", "#4f9e6b", "#9a6ee0", "#c99a3c", "#3f9c9c"];
+const TAIL_SIDES = new Set(["top", "right", "bottom", "left"]);
+const DEFAULT_THEME_ID = "clawd";
+const EYE_COUNT = 2;
+// Three tapering circles curving away from the card: the offsets drift along X
+// as well as Y, so the trail arcs instead of stacking in a straight line.
+// Drawn pointing down; the side rules in the stylesheet mirror and rotate it
+// onto the other edges. Every circle's stroke stays inside the viewBox, which
+// is what keeps the svg's own clip from shaving it.
+const TAIL_WIDTH = 17;
+const TAIL_HEIGHT = 17;
+const TAIL_CIRCLES = [
+  { cx: 5, cy: 5, r: 3.2 },
+  { cx: 10, cy: 9, r: 2.1 },
+  { cx: 12.5, cy: 14, r: 1.3 },
+];
+// Past two cards the tails collide and the stack looks chaotic, so a short
+// stack is the only one that gets a tail or a face.
+const MAX_TAIL_CARDS = 2;
+
+// notice id -> card element, for every card currently in the stack.
+const rendered = new Map();
+// card element -> the content signature it was last built from, so a card whose
+// id survived a snapshot is only rewritten when what it paints actually changed.
+// Keyed by element, so a card that leaves the stack takes its entry with it.
+const signatures = new WeakMap();
+// card element -> { key, timer } for the cards collapsing out of the stack.
+const exiting = new Map();
+// What the last snapshot said about the presentation as a whole: the active
+// theme's fill, and which edge of the stack faces the pet.
+const presentation = { themeId: DEFAULT_THEME_ID, tailSide: null };
+let paletteCache = null;
+
+function levelOf(notice) {
+  const level = notice && notice.level;
+  return LEVELS.has(level) ? level : "info";
+}
+
+function noticeIdOf(notice) {
+  return notice && typeof notice.id === "string" && notice.id ? notice.id : "";
+}
+
+// A notice the store could not identify still has to render; its position is
+// the only stable handle available.
+function noticeKeyOf(notice, index) {
+  return noticeIdOf(notice) || `anonymous-${index}`;
+}
+
+// The palette is defined once in CSS next to the --level-* tokens; the literal
+// list only covers a stylesheet that failed to apply.
+function seriesPalette() {
+  if (paletteCache) return paletteCache;
+  let computed = null;
+  try {
+    computed = getComputedStyle(document.documentElement);
+  } catch (_) {
+    computed = null;
+  }
+  paletteCache = SERIES_VARS.map((name, index) => {
+    const value = computed ? computed.getPropertyValue(name).trim() : "";
+    return value || SERIES_FALLBACK[index];
+  });
+  return paletteCache;
+}
+
+function round2(value) {
+  return Math.round(value * 100) / 100;
+}
+
+// Polyline coordinates for one series, normalized into the sparkline box. Fewer
+// than two samples and a flat series both fall back to the vertical middle, so
+// the normalization never divides by a zero-width domain.
+function sparklinePoints(points) {
+  const values = Array.isArray(points)
+    ? points.map((point) => Number(point)).filter((value) => Number.isFinite(value))
+    : [];
+  const left = SPARK_PAD;
+  const right = SPARK_WIDTH - SPARK_PAD;
+  const top = SPARK_PAD;
+  const bottom = SPARK_HEIGHT - SPARK_PAD;
+  const middle = (top + bottom) / 2;
+  // A single sample (or none) has no line to draw.
+  if (values.length < 2) return `${left},${middle} ${right},${middle}`;
+  let min = values[0];
+  let max = values[0];
+  for (const value of values) {
+    if (min > value) min = value;
+    if (value > max) max = value;
+  }
+  const span = max - min;
+  const step = (right - left) / (values.length - 1);
+  const coords = [];
+  for (let index = 0; index < values.length; index += 1) {
+    const x = left + step * index;
+    const y = span === 0 ? middle : bottom - ((values[index] - min) / span) * (bottom - top);
+    coords.push(`${round2(x)},${round2(y)}`);
+  }
+  return coords.join(" ");
+}
+
+// The sparkline is built node by node from the numbers: agent-pushed series
+// data never reaches the HTML parser at all.
+function buildSparkline(points, color) {
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("class", "sparkline");
+  svg.setAttribute("viewBox", `0 0 ${SPARK_WIDTH} ${SPARK_HEIGHT}`);
+  svg.setAttribute("width", String(SPARK_WIDTH));
+  svg.setAttribute("height", String(SPARK_HEIGHT));
+  svg.setAttribute("aria-hidden", "true");
+
+  const line = document.createElementNS(SVG_NS, "polyline");
+  line.setAttribute("fill", "none");
+  line.setAttribute("stroke", color);
+  line.setAttribute("stroke-width", "1.5");
+  line.setAttribute("stroke-linecap", "round");
+  line.setAttribute("stroke-linejoin", "round");
+  // Keeps the stroke crisp however the row is scaled by the text zoom.
+  line.setAttribute("vector-effect", "non-scaling-stroke");
+  line.setAttribute("points", sparklinePoints(points));
+
+  svg.appendChild(line);
+  return svg;
+}
+
+function buildSeriesRow(series, color) {
+  const row = document.createElement("div");
+  row.className = "series";
+
+  const name = document.createElement("div");
+  name.className = "series-name";
+  name.textContent = series && series.name ? String(series.name) : "";
+
+  const reading = document.createElement("div");
+  reading.className = "series-reading";
+
+  const value = document.createElement("span");
+  value.className = "series-value";
+  const raw = series ? series.value : null;
+  value.textContent = raw === null || raw === undefined || raw === "" ? String.fromCharCode(0x2014) : String(raw);
+
+  const unit = document.createElement("span");
+  unit.className = "series-unit";
+  unit.textContent = series && series.unit ? String(series.unit) : "";
+
+  reading.appendChild(value);
+  reading.appendChild(unit);
+  row.appendChild(name);
+  row.appendChild(buildSparkline(series ? series.points : null, color));
+  row.appendChild(reading);
+  return row;
+}
+
+// The level glyph leads the card's first line rather than sitting in a corner:
+// the top-right corner belongs to the dismiss button, and a cross there is
+// indistinguishable from a close control.
+function buildLevelGlyph(level) {
+  const glyph = document.createElement("span");
+  glyph.className = "level-glyph";
+  glyph.textContent = LEVEL_GLYPHS[level] || LEVEL_GLYPHS.info;
+  return glyph;
+}
+
+// Two dot eyes, in the pet's own pen: the card is a face, not a panel. They
+// stay in the DOM on every card and are switched on and off with the stack
+// length, so the card keeps one shape whatever it is wearing.
+function buildEyes() {
+  const wrap = document.createElement("div");
+  wrap.className = "card-eyes";
+  wrap.setAttribute("aria-hidden", "true");
+  for (let index = 0; index < EYE_COUNT; index += 1) {
+    const eye = document.createElement("span");
+    eye.className = "eye";
+    wrap.appendChild(eye);
+  }
+  return wrap;
+}
+
+// Three stroked circles, node by node like everything else here. The fill and
+// the outline come from the stylesheet, so the tail wears the card's own theme;
+// the two groups around them carry the wiggle and the level pose.
+function buildTail() {
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("class", "tail");
+  svg.setAttribute("viewBox", `0 0 ${TAIL_WIDTH} ${TAIL_HEIGHT}`);
+  svg.setAttribute("width", String(TAIL_WIDTH));
+  svg.setAttribute("height", String(TAIL_HEIGHT));
+  svg.setAttribute("aria-hidden", "true");
+  const swing = document.createElementNS(SVG_NS, "g");
+  swing.setAttribute("class", "tail-swing");
+  const pose = document.createElementNS(SVG_NS, "g");
+  pose.setAttribute("class", "tail-pose");
+  for (const circle of TAIL_CIRCLES) {
+    const node = document.createElementNS(SVG_NS, "circle");
+    node.setAttribute("cx", String(circle.cx));
+    node.setAttribute("cy", String(circle.cy));
+    node.setAttribute("r", String(circle.r));
+    pose.appendChild(node);
+  }
+  swing.appendChild(pose);
+  svg.appendChild(swing);
+  return svg;
+}
+
+// The card's text block: the level glyph prefixed to whichever line leads, the
+// title, and then either the trend rows or the body. Split out of buildCard so
+// an in-place update can rebuild exactly this and nothing else.
+function buildCopy(notice, level) {
+  const copy = document.createElement("div");
+  copy.className = "copy";
+  // The line the level glyph prefixes: the title when there is one, otherwise
+  // whatever the card does start with.
+  let firstLine = null;
+
+  const title = notice && notice.title ? String(notice.title) : "";
+  if (title) {
+    const titleEl = document.createElement("div");
+    titleEl.className = "title";
+    titleEl.textContent = title;
+    copy.appendChild(titleEl);
+    firstLine = titleEl;
+  }
+
+  const body = notice && notice.body ? String(notice.body) : "";
+  const series = notice && notice.kind === "trend" && Array.isArray(notice.series)
+    ? notice.series
+    : [];
+  if (series.length) {
+    const palette = seriesPalette();
+    for (let index = 0; index < series.length; index += 1) {
+      const row = buildSeriesRow(series[index], palette[index % palette.length]);
+      copy.appendChild(row);
+      if (!firstLine) firstLine = row;
+    }
+  } else if (body) {
+    // Also the fallback for a trend notice that arrived without series data.
+    const bodyEl = document.createElement("div");
+    bodyEl.className = "body";
+    bodyEl.textContent = body;
+    copy.appendChild(bodyEl);
+    if (!firstLine) firstLine = bodyEl;
+  }
+
+  if (firstLine) firstLine.insertBefore(buildLevelGlyph(level), firstLine.firstChild);
+  return copy;
+}
+
+// Every notice string is written with textContent: agent-pushed content is
+// never parsed as markup.
+function buildCard(notice) {
+  const level = levelOf(notice);
+  const id = noticeIdOf(notice);
+
+  const card = document.createElement("div");
+  card.className = "card";
+  card.dataset.level = level;
+  card.dataset.kind = notice && notice.kind === "trend" ? "trend" : "text";
+
+  const bar = document.createElement("div");
+  bar.className = "level-bar";
+
+  const copy = buildCopy(notice, level);
+
+  const dismiss = document.createElement("button");
+  dismiss.type = "button";
+  dismiss.className = "card-dismiss";
+  dismiss.textContent = String.fromCharCode(0x00d7);
+  dismiss.setAttribute("aria-label", "Dismiss");
+  dismiss.addEventListener("click", (event) => {
+    event.stopPropagation();
+    if (id) window.noticeBubbleAPI.dismiss(id);
+  });
+
+  // A trend card's body belongs to the expanded chart, so only its × dismisses.
+  // The kind is read back off the element rather than captured here, so an
+  // in-place update that turns a text card into a chart card changes what a
+  // click does by rewriting that one attribute.
+  card.addEventListener("click", () => {
+    if (!id) return;
+    if (card.dataset.kind === "trend") window.noticeBubbleAPI.expand(id);
+    else window.noticeBubbleAPI.dismiss(id);
+  });
+
+  card.appendChild(buildEyes());
+  card.appendChild(bar);
+  card.appendChild(copy);
+  card.appendChild(dismiss);
+  return card;
+}
+
+// What a card actually paints, as one comparable string. The notices are frozen
+// and rebuilt on every snapshot, so identity never survives a diff and cannot be
+// used to tell "unchanged" from "re-pushed". The image is left out on purpose:
+// the bubble card does not draw it (the chart window does), and comparing a 6 MB
+// base64 string on every snapshot would cost far more than it is worth.
+function contentSignature(notice) {
+  if (!notice) return "";
+  return JSON.stringify([
+    notice.title || "",
+    notice.body || "",
+    levelOf(notice),
+    notice.kind || "",
+    Array.isArray(notice.series) ? notice.series : [],
+  ]);
+}
+
+// Rewrite a card that is already on screen, under a keyed re-push that kept its
+// id. Everything structural survives: the card element, its tail, its eyes, its
+// slot in the stack, and the id the renderer diffs by. Only the level chrome and
+// the copy block are rebuilt. Nothing here animates — the entrance bounce and
+// the tail wiggle belong to a card arriving, and replaying them on every
+// heartbeat is exactly the noise this path exists to avoid.
+function updateCard(element, notice) {
+  const level = levelOf(notice);
+  element.dataset.level = level;
+  element.dataset.kind = notice && notice.kind === "trend" ? "trend" : "text";
+  const copy = element.querySelector(".copy");
+  if (copy) copy.replaceWith(buildCopy(notice, level));
+}
+
+function reportHeight() {
+  requestAnimationFrame(() => {
+    // scrollHeight, not offsetHeight: when the stack is taller than the window
+    // the page scrolls, and main must still hear the full content height so it
+    // can size up to its own cap instead of ratcheting down to the clamp. It
+    // carries the stack's own gutter with it, which is where the tail and the
+    // hard shadow live.
+    const height = stack.scrollHeight + 16;
+    if (height > 16) window.noticeBubbleAPI.reportHeight(height);
+  });
+}
+
+function firstLiveChild() {
+  let node = stack.firstChild;
+  while (node && exiting.has(node)) node = node.nextSibling;
+  return node;
+}
+
+function nextLiveSibling(node) {
+  let sibling = node.nextSibling;
+  while (sibling && exiting.has(sibling)) sibling = sibling.nextSibling;
+  return sibling;
+}
+
+// One forward pass: a card already in the right place is left alone, anything
+// else is inserted before the next live card. Cards on their way out are
+// skipped so they keep their slot while they collapse.
+function reorder(elements) {
+  let reference = firstLiveChild();
+  for (const element of elements) {
+    if (reference === element) {
+      reference = nextLiveSibling(element);
+      continue;
+    }
+    stack.insertBefore(element, reference);
+  }
+}
+
+function removeCard(element) {
+  const entry = exiting.get(element);
+  if (entry) {
+    clearTimeout(entry.timer);
+    exiting.delete(element);
+  }
+  if (element.parentNode === stack) stack.removeChild(element);
+  reportHeight();
+}
+
+function prefersReducedMotion() {
+  try {
+    return !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  } catch (_) {
+    return false;
+  }
+}
+
+// Collapse the card out of the flow: pin its measured box, force a reflow so
+// the transition has a real start value, then drop height, padding, border and
+// margin to zero. The survivors slide up into the space as it shrinks.
+function collapseCard(key, element) {
+  if (exiting.has(element)) return;
+  element.classList.add("leaving");
+  if (prefersReducedMotion()) {
+    removeCard(element);
+    return;
+  }
+
+  const height = element.offsetHeight;
+  element.style.height = `${height}px`;
+  element.style.transition = "none";
+  void element.offsetHeight;
+  element.style.overflow = "hidden";
+  element.style.transition = [
+    `height ${EXIT_MS}ms ${EXIT_EASE}`,
+    `padding-top ${EXIT_MS}ms ${EXIT_EASE}`,
+    `padding-bottom ${EXIT_MS}ms ${EXIT_EASE}`,
+    `border-width ${EXIT_MS}ms ${EXIT_EASE}`,
+    `margin-top ${EXIT_MS}ms ${EXIT_EASE}`,
+    `opacity ${EXIT_MS}ms ${EXIT_EASE}`,
+  ].join(", ");
+  element.style.height = "0px";
+  element.style.paddingTop = "0px";
+  element.style.paddingBottom = "0px";
+  element.style.borderWidth = "0px";
+  element.style.marginTop = "0px";
+  element.style.opacity = "0";
+
+  const timer = setTimeout(() => removeCard(element), EXIT_MS + 30);
+  exiting.set(element, { key, timer });
+}
+
+// A notice that reappears mid-collapse takes its card back rather than leaving
+// a doomed copy behind.
+function reviveCard(element) {
+  const entry = exiting.get(element);
+  if (!entry) return;
+  clearTimeout(entry.timer);
+  exiting.delete(element);
+  element.classList.remove("leaving");
+  element.style.cssText = "";
+  return entry.key;
+}
+
+// The face the stack wears. The tail hangs off the card the pet sees first —
+// the stack's outer edge on the side the pet is on, so a top tail belongs to
+// the oldest card and every other side to the newest one at the bottom. The
+// eyes ride on every card, looking 1px toward the pet. Both are dropped once
+// the stack is long: three tails collide, and three pairs of eyes stop reading
+// as one creature.
+function applyPresentation(elements, side) {
+  const face = elements.length > 0 && elements.length <= MAX_TAIL_CARDS;
+  const gaze = side === "left" || side === "right" ? side : "center";
+  const carrier = face && side ? (side === "top" ? elements[0] : elements[elements.length - 1]) : null;
+  for (const element of elements) {
+    const existing = element.querySelector(".tail");
+    if (element === carrier) {
+      // Rebuilt only when it is missing: the tail carries a one-shot entrance
+      // wiggle, and replacing the node on every snapshot would replay it.
+      if (!existing) element.appendChild(buildTail());
+    } else if (existing) {
+      element.removeChild(existing);
+      delete element.dataset.tail;
+    }
+    element.dataset.eyes = face ? "on" : "off";
+    element.dataset.gaze = gaze;
+  }
+  if (!carrier) {
+    delete document.body.dataset.tail;
+    return;
+  }
+  carrier.dataset.tail = side;
+  // The stack's own gutter opens on this side to hold the tail; without it the
+  // scroll container would clip the circles off.
+  document.body.dataset.tail = side;
+}
+
+function show(payload) {
+  // A bare array is the shape this channel used before it grew the theme id and
+  // the tail side; it still renders.
+  const legacy = Array.isArray(payload);
+  const data = !legacy && payload && typeof payload === "object" ? payload : {};
+  const list = legacy ? payload : (Array.isArray(data.notices) ? data.notices : []);
+  presentation.themeId = typeof data.themeId === "string" && data.themeId
+    ? data.themeId
+    : DEFAULT_THEME_ID;
+  presentation.tailSide = TAIL_SIDES.has(data.tailSide) ? data.tailSide : null;
+
+  const desired = [];
+  const keys = new Set();
+  for (let index = 0; index < list.length; index += 1) {
+    const notice = list[index];
+    const key = noticeKeyOf(notice, index);
+    keys.add(key);
+    desired.push({ key, notice });
+  }
+
+  for (const [element, entry] of [...exiting]) {
+    if (!entry.key || !keys.has(entry.key)) continue;
+    if (reviveCard(element)) rendered.set(entry.key, element);
+  }
+
+  for (const [key, element] of [...rendered]) {
+    if (keys.has(key)) continue;
+    rendered.delete(key);
+    collapseCard(key, element);
+  }
+
+  const next = [];
+  for (const entry of desired) {
+    let element = rendered.get(entry.key);
+    if (!element) {
+      element = buildCard(entry.notice);
+      // Only a notice that has never been on screen bounces; a card the diff
+      // kept is left where it is. A crowd of them bouncing would be chaos.
+      if (desired.length <= MAX_TAIL_CARDS) element.classList.add("entering");
+      rendered.set(entry.key, element);
+      signatures.set(element, contentSignature(entry.notice));
+    } else {
+      // The same id with different content is a keyed re-push that replaced its
+      // notice in the store (src/notice-store.js keeps the id on purpose). The
+      // card stays where it is and is rewritten quietly — no bounce, no wiggle.
+      const signature = contentSignature(entry.notice);
+      if (signatures.get(element) !== signature) {
+        updateCard(element, entry.notice);
+        signatures.set(element, signature);
+      }
+    }
+    element.dataset.theme = presentation.themeId;
+    next.push(element);
+  }
+
+  reorder(next);
+  applyPresentation(next, next.length > 0 && next.length <= MAX_TAIL_CARDS ? presentation.tailSide : null);
+  if (next.length === 0) {
+    // Nothing left to show: the whole stack slides out (main sends the same on
+    // an empty store snapshot).
+    stack.classList.remove("visible");
+    stack.classList.add("hiding");
+    reportHeight();
+    return;
+  }
+  stack.classList.remove("hiding");
+  stack.classList.add("visible");
+  reportHeight();
+}
+
+function hide() {
+  stack.classList.remove("visible");
+  stack.classList.add("hiding");
+}
+
+window.noticeBubbleAPI.onShow(show);
+window.noticeBubbleAPI.onHide(hide);
+</script>
+</body>
+</html>
