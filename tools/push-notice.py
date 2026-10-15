@@ -43,6 +43,25 @@ not a promise that a particular card was there.
 Stdlib only, on purpose: this is meant to be droppable into any agent harness
 without a pip install.
 
+Encoding: pass text as arguments or pipe it in — both are safe. This tool sends
+UTF-8, and `json.dumps` escapes non-ASCII into ASCII `\\uXXXX` sequences, so the
+bytes on the wire are plain ASCII whatever the console codepage happens to be.
+
+The trap is a hand-rolled `curl`. On Windows, MSYS `curl` is a native binary
+whose argv arrives in the ANSI codepage — GBK on a zh-CN box — so
+
+    curl -d '{"body":"中文"}' http://127.0.0.1:23333/notice
+
+puts GBK bytes on a wire the server decodes as UTF-8. The card renders as
+mojibake and the server gets blamed for a bug that is in the invocation. Keep
+non-ASCII out of curl's argv:
+
+    curl -X POST http://127.0.0.1:23333/notice \\
+        -H "Content-Type: application/json" --data-binary @payload.json
+
+(the transport guard wants that Content-Type on DELETE as well, plus a selector
+body — `{"all":true}` or `{"key":...}`).
+
 Exit codes:
     0  notice accepted, or clear succeeded
     1  could not reach Clawd, or Clawd rejected the request
@@ -309,7 +328,13 @@ def parse_args(argv):
             'Body may be piped: echo "text" | push-notice.py "Title"\n'
             'A trend card needs --series; --image adds a chart that opens on click.\n'
             '--key makes repeated pushes update one card instead of stacking new ones.\n'
-            '--clear retracts: alone it empties the stack, with a KEY it removes that card.'
+            '--clear retracts: alone it empties the stack, with a KEY it removes that card.\n'
+            '\n'
+            'Non-ASCII is safe here — this tool escapes it before it reaches the wire.\n'
+            'Hand-rolled curl is not: on Windows MSYS curl sends argv as GBK, which the\n'
+            'server reads as UTF-8, so Chinese comes out as mojibake. If you must use\n'
+            'curl, keep non-ASCII out of argv: write the JSON to a UTF-8 file and pass\n'
+            '--data-binary @payload.json.'
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
