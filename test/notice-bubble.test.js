@@ -249,6 +249,52 @@ describe("notice bubble contract", () => {
     bubble.cleanup();
   });
 
+  it("sends the bubble style, falling back to pixel for anything unknown", () => {
+    for (const [given, expected] of [["comic", "comic"], ["card", "card"], ["pixel", "pixel"], ["neon", "pixel"], [undefined, "pixel"]]) {
+      const ctx = createCtx(given === undefined ? {} : { getNoticeStyle: () => given });
+      const bubble = initNoticeBubble(ctx);
+      ctx.noticeStore.push(notice("n1"));
+      const win = bubble.getBubbleWindow();
+      assert.equal(win.sent[win.sent.length - 1].payload.style, expected, `style ${String(given)}`);
+      bubble.cleanup();
+    }
+  });
+
+  it("refreshPresentation re-sends the current stack only while presenting", () => {
+    let style = "pixel";
+    const ctx = createCtx({ getNoticeStyle: () => style });
+    const bubble = initNoticeBubble(ctx);
+    assert.equal(bubble.refreshPresentation(), false, "no window yet");
+    ctx.noticeStore.push(notice("n1"));
+    const win = bubble.getBubbleWindow();
+    style = "comic";
+    const before = win.sent.length;
+    assert.equal(bubble.refreshPresentation(), true);
+    assert.equal(win.sent.length, before + 1);
+    assert.equal(win.sent[win.sent.length - 1].channel, "notice-bubble-show");
+    assert.equal(win.sent[win.sent.length - 1].payload.style, "comic");
+    bubble.suspendForFullscreen();
+    assert.equal(bubble.refreshPresentation(), false, "a suspended bubble waits for its restore");
+    bubble.cleanup();
+  });
+
+  it("re-sends the presentation when a measured height flips the tail side", () => {
+    let side = "top";
+    const ctx = createCtx({ getNoticeBubbleTailSide: () => side });
+    const bubble = initNoticeBubble(ctx);
+    ctx.noticeStore.push(notice("n1"));
+    const win = bubble.getBubbleWindow();
+    const shows = () => win.sent.filter((entry) => entry.channel === "notice-bubble-show");
+    const before = shows().length;
+    bubble.handleNoticeBubbleHeight({ sender: win.webContents }, 220);
+    assert.equal(shows().length, before, "same side: no re-send");
+    side = "bottom";
+    bubble.handleNoticeBubbleHeight({ sender: win.webContents }, 260);
+    assert.equal(shows().length, before + 1, "the side changed: the tail is told");
+    assert.equal(shows()[shows().length - 1].payload.tailSide, "bottom");
+    bubble.cleanup();
+  });
+
   it("repositions from the renderer's measured height and clamps it to the work area", () => {
     const ctx = createCtx();
     const bubble = initNoticeBubble(ctx);
@@ -599,6 +645,35 @@ describe("notice-bubble.html", () => {
       source,
       /if \(!element\) \{\s*element = buildCard\(entry\.notice\);\s*\/\/[\s\S]*?\n\s*if \(desired\.length <= MAX_TAIL_CARDS\) element\.classList\.add\("entering"\);/
     );
+  });
+
+  it("switches style through one body attribute and keeps the card style intact", () => {
+    const source = textOf(findAll(document, (node) => node.name === "script")[0]);
+    const css = textOf(findAll(document, (node) => node.name === "style")[0]);
+    assert.match(source, /const NOTICE_STYLES = new Set\(\["pixel", "comic", "card"\]\);/);
+    assert.match(source, /document\.body\.dataset\.noticeStyle = NOTICE_STYLES\.has\(data\.style\) \? data\.style : DEFAULT_NOTICE_STYLE;/);
+    assert.match(source, /const DEFAULT_NOTICE_STYLE = "pixel";/);
+    // Every rule after the style marker is scoped to a non-card style, so the
+    // sticker card above it is exactly what it was.
+    assert.ok(css.includes("/* ── Notice styles"), "the style section is declared");
+    const tail = css.slice(css.indexOf("/* ── Notice styles")).replace(/\/\*[\s\S]*?\*\//g, "");
+    for (const rule of tail.match(/^[^@{}\n/][^{}]*\{/gm) || []) {
+      if (/^\s*(from|to|\d+%)/.test(rule) || /^\s*\.skin-/.test(rule)) continue;
+      assert.match(rule, /body\[data-notice-style/, `scoped: ${rule.trim()}`);
+      assert.doesNotMatch(rule, /data-notice-style="card"/, "the card style gets no overrides");
+    }
+  });
+
+  it("bundles its display fonts locally and lets the CSP load them", () => {
+    const css = textOf(findAll(document, (node) => node.name === "style")[0]);
+    const csp = findAll(document, (node) => node.name === "meta" && node.attribs["http-equiv"] === "Content-Security-Policy")[0];
+    assert.match(csp.attribs.content, /font-src 'self' file:/);
+    assert.match(csp.attribs.content, /img-src data:/);
+    for (const file of css.match(/url\("fonts\/[^"]+"\)/g) || []) {
+      const name = file.slice(5, -2);
+      assert.ok(fs.existsSync(path.join(__dirname, "..", "src", name)), `${name} is shipped`);
+    }
+    assert.equal((css.match(/@font-face/g) || []).length, 3);
   });
 
   it("stands still for prefers-reduced-motion", () => {

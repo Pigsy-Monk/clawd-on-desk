@@ -315,6 +315,9 @@ const SCHEMA = {
   // card's level picks the animation. Default ON: a reaction to a message the
   // user's own agent just pushed is expected, not a surprise.
   noticeReactionsEnabled: { type: "boolean", default: true },
+  // How notice cards are drawn: a pixel dialog box on the pet's own grid, a
+  // comic speech balloon, or the original sticker card.
+  noticeBubbleStyle: { type: "string", default: "pixel", enum: ["pixel", "comic", "card"] },
   lowPowerIdleMode: { type: "boolean", default: false },
   mobilePreviewEnabled: { type: "boolean", default: false },
   // Separate, explicit consent for the broader permission-summary disclosure.

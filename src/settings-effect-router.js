@@ -89,6 +89,7 @@ function createSettingsEffectRouter(options = {}) {
   const refreshPermissionAutoCloseForPolicy = options.refreshPermissionAutoCloseForPolicy || noop;
   const hideUpdateBubbleForPolicy = options.hideUpdateBubbleForPolicy || noop;
   const refreshUpdateBubbleAutoClose = options.refreshUpdateBubbleAutoClose || noop;
+  const refreshNoticeBubblePresentation = options.refreshNoticeBubblePresentation || noop;
   const repositionFloatingBubbles = options.repositionFloatingBubbles || noop;
   const applyTextScale = options.applyTextScale || noop;
   const syncSessionHudVisibility = options.syncSessionHudVisibility || noop;
@@ -307,6 +308,11 @@ function createSettingsEffectRouter(options = {}) {
     }
     if (Object.keys(changes).some((key) => BUBBLE_PLACEMENT_KEYS.has(key))) {
       safeCall(logWarn, "Clawd: repositionFloatingBubbles failed:", repositionFloatingBubbles);
+    }
+    // The notice bubble reads its style from the presentation payload, so a
+    // change re-sends the current stack and the cards on screen restyle at once.
+    if ("noticeBubbleStyle" in changes) {
+      safeCall(logWarn, "Clawd: notice bubble restyle failed:", refreshNoticeBubblePresentation);
     }
     if ("textScale" in changes || "textScaleByDisplay" in changes) {
       // applyTextScale owns the whole cascade: per-display zoom on live text

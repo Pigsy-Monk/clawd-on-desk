@@ -268,6 +268,14 @@ describe("updateRegistry pure-data validators", () => {
     assert.strictEqual(updateRegistry.quotaRingDisplayMode(true).status, "error");
   });
 
+  it("accepts only supported notice bubble styles", () => {
+    for (const style of ["pixel", "comic", "card"]) {
+      assert.strictEqual(updateRegistry.noticeBubbleStyle(style).status, "ok");
+    }
+    assert.strictEqual(updateRegistry.noticeBubbleStyle("neon").status, "error");
+    assert.strictEqual(updateRegistry.noticeBubbleStyle(1).status, "error");
+  });
+
   it("accepts only supported bubble placement enums", () => {
     for (const value of ["auto", "left", "right"]) {
       assert.strictEqual(updateRegistry.bubbleFollowPreference(value).status, "ok");

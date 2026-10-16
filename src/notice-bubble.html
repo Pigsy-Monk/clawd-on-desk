@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; font-src 'self' file:; img-src data:">
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body {
@@ -344,9 +344,184 @@ body[data-tail="right"] { --gutter-right: 20px; }
   background: var(--dismiss-hover-bg);
   color: var(--text-main);
 }
+
+/* ── Notice styles ──────────────────────────────────────────────────────────
+   Everything from here on applies only under body[data-notice-style="comic"]
+   or ="pixel". The sticker card above is the "card" style and is left exactly
+   as it was; the other two keep its skeleton, hide the parts they do not wear,
+   and add a skin the script builds per card. */
+@font-face { font-family: "Notice KuaiLe"; src: url("fonts/zcool-kuaile.woff2") format("woff2"); font-display: swap; }
+@font-face { font-family: "Notice QingKe"; src: url("fonts/zcool-qingke-huangyou.woff2") format("woff2"); font-display: swap; }
+@font-face { font-family: "Notice Silkscreen"; src: url("fonts/silkscreen.woff2") format("woff2"); font-display: swap; }
+.skin-defs { position: absolute; width: 0; height: 0; overflow: hidden; }
+.skin-stamp, .skin-plate, .skin-more { display: none; }
+/* Typewriter: a hidden copy of the line holds its final size, so a card never
+   grows while it types and the window is measured once. */
+.skin-type { display: grid; }
+.skin-type > span { grid-area: 1 / 1; }
+.skin-type-ghost { visibility: hidden; }
+
+body[data-notice-style="comic"] .card .card-eyes,
+body[data-notice-style="comic"] .card .level-bar,
+body[data-notice-style="comic"] .card .tail,
+body[data-notice-style="pixel"] .card .card-eyes,
+body[data-notice-style="pixel"] .card .level-bar,
+body[data-notice-style="pixel"] .card .tail,
+body[data-notice-style="pixel"] .card .level-glyph { display: none; }
+/* ── comic: shape carries the level, colour stays with the pet ── */
+body[data-notice-style="comic"] {
+  --gutter-top: 16px; --gutter-right: 16px; --gutter-bottom: 16px; --gutter-left: 16px;
+}
+body[data-notice-style="comic"][data-tail="top"] { --gutter-top: 34px; }
+body[data-notice-style="comic"][data-tail="bottom"] { --gutter-bottom: 34px; }
+body[data-notice-style="comic"][data-tail="left"] { --gutter-left: 34px; }
+body[data-notice-style="comic"][data-tail="right"] { --gutter-right: 34px; }
+body[data-notice-style="comic"] .card {
+  --paper: #FFFFFF;
+  --header-color: #1D1D22;
+  --text-main: #3B3B44;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 16px 26px 18px;
+  isolation: isolate;
+}
+body[data-notice-style="comic"] .card + .card { margin-top: 18px; }
+body[data-notice-style="comic"] .card[data-level="warn"] { --paper: #FFF1D6; }
+body[data-notice-style="comic"] .card[data-level="error"] { --paper: #FFD43B; padding: 22px 34px 24px; }
+body[data-notice-style="comic"] .skin-ink { position: absolute; z-index: -1; overflow: visible; pointer-events: none; }
+body[data-notice-style="comic"] .skin-ink path {
+  fill: var(--paper); stroke: #000; stroke-width: 3; stroke-linejoin: round;
+}
+body[data-notice-style="comic"] .title { font-family: "Notice KuaiLe", -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; font-size: 18px; font-weight: 400; letter-spacing: 0.01em; }
+body[data-notice-style="comic"] .card[data-level="error"] .title { font-size: 21px; }
+body[data-notice-style="comic"] .body { font-size: 12.5px; font-weight: 500; }
+body[data-notice-style="comic"] .level-glyph { opacity: 0.7; }
+body[data-notice-style="comic"] .card-dismiss { top: 8px; right: 12px; width: 24px; height: 24px; opacity: 0.45; }
+body[data-notice-style="comic"] .copy { padding-right: 14px; }
+/* an ink check stamp lands on a success card once */
+body[data-notice-style="comic"] .card[data-level="success"] .skin-stamp {
+  display: flex; align-items: center; justify-content: center;
+  position: absolute; top: -12px; right: 30px; width: 30px; height: 30px;
+  border: 3px solid #B23A1F; border-radius: 50%; background: #FFF7F2;
+  color: #B23A1F; font-size: 17px; font-weight: 700; rotate: -12deg;
+}
+body[data-notice-style="comic"] .card.entering[data-level="success"] .skin-stamp { animation: skin-stamp 320ms cubic-bezier(0.3, 0, 0.2, 1.4) 260ms both; }
+@keyframes skin-stamp { 0% { opacity: 0; scale: 2.1; } 60% { opacity: 1; scale: 0.92; } 100% { opacity: 1; scale: 1; } }
+body[data-notice-style="comic"] .card.entering { animation: skin-pop 380ms cubic-bezier(0.22, 1.35, 0.4, 1); }
+body[data-notice-style="comic"] .card.entering[data-level="error"] { animation: skin-pop 300ms cubic-bezier(0.22, 1.35, 0.4, 1), skin-shudder 420ms 300ms; }
+body[data-notice-style="comic"] .card[data-tail="bottom"] { transform-origin: 40px 100%; }
+body[data-notice-style="comic"] .card[data-tail="top"] { transform-origin: 40px 0; }
+body[data-notice-style="comic"] .card[data-tail="left"] { transform-origin: 0 36px; }
+body[data-notice-style="comic"] .card[data-tail="right"] { transform-origin: 100% 36px; }
+@keyframes skin-pop { 0% { transform: scale(0.4, 0.25); opacity: 0; } 55% { transform: scale(1.04, 0.97); opacity: 1; } 100% { transform: scale(1); } }
+@keyframes skin-shudder {
+  0%, 100% { translate: 0 0; } 15% { translate: -5px 1px; } 30% { translate: 4px -1px; }
+  45% { translate: -3px 0; } 60% { translate: 2px 1px; } 80% { translate: -1px 0; }
+}
+/* ── pixel: an RPG dialog box on the pet's own grid ── */
+body[data-notice-style="pixel"] {
+  --gutter-top: 18px; --gutter-right: 10px; --gutter-bottom: 10px; --gutter-left: 6px;
+}
+body[data-notice-style="pixel"][data-tail="top"] { --gutter-top: 24px; }
+body[data-notice-style="pixel"][data-tail="bottom"] { --gutter-bottom: 20px; }
+body[data-notice-style="pixel"][data-tail="left"] { --gutter-left: 18px; }
+body[data-notice-style="pixel"][data-tail="right"] { --gutter-right: 20px; }
+/* The frame: a 12×12 sprite sliced 4px a side and drawn ×2, so every edge
+   lands on whole pixels. One sprite per theme: the inner rule is the pet's
+   own colour, the body is cream. */
+body[data-notice-style="pixel"] .card {
+  --text-main: #4A3B30;
+  --header-color: #1D1A17;
+  background: transparent;
+  border: 8px solid transparent;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 12px 12px 10px;
+  border-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' shape-rendering='crispEdges'%3E%3Cpath d='M1 0h10v1h1v10h-1v1h-10v-1h-1v-10h1z' fill='%23000'/%3E%3Crect x='1' y='1' width='10' height='10' fill='%23DE886D'/%3E%3Crect x='2' y='2' width='8' height='8' fill='%23FFF7EE'/%3E%3Crect x='2' y='9' width='8' height='1' fill='%23F1DCC8'/%3E%3C/svg%3E") 4 fill / 8px / 0 stretch;
+  image-rendering: pixelated;
+  filter: drop-shadow(3px 3px 0 rgba(0, 0, 0, 0.4));
+}
+body[data-notice-style="pixel"] .card[data-theme="calico"] {
+  border-image-source: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' shape-rendering='crispEdges'%3E%3Cpath d='M1 0h10v1h1v10h-1v1h-10v-1h-1v-10h1z' fill='%23000'/%3E%3Crect x='1' y='1' width='10' height='10' fill='%23E8A354'/%3E%3Crect x='2' y='2' width='8' height='8' fill='%23FFF7EE'/%3E%3Crect x='2' y='9' width='8' height='1' fill='%23F1DCC8'/%3E%3C/svg%3E");
+}
+body[data-notice-style="pixel"] .card[data-theme="cloudling"] {
+  border-image-source: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' shape-rendering='crispEdges'%3E%3Cpath d='M1 0h10v1h1v10h-1v1h-10v-1h-1v-10h1z' fill='%23000'/%3E%3Crect x='1' y='1' width='10' height='10' fill='%23B1A7FF'/%3E%3Crect x='2' y='2' width='8' height='8' fill='%23FFF7EE'/%3E%3Crect x='2' y='9' width='8' height='1' fill='%23E6DDF2'/%3E%3C/svg%3E");
+}
+body[data-notice-style="pixel"] .card + .card { margin-top: 18px; }
+body[data-notice-style="pixel"] .title {
+  font-family: "Notice QingKe", -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-size: 17px; font-weight: 400; letter-spacing: 0.04em;
+}
+body[data-notice-style="pixel"] .body { font-size: 12.5px; font-weight: 500; line-height: 1.6; }
+body[data-notice-style="pixel"] .title,
+body[data-notice-style="pixel"] .body { display: flex; align-items: flex-start; gap: 8px; }
+body[data-notice-style="pixel"] .title > .skin-type,
+body[data-notice-style="pixel"] .body > .skin-type { flex: 1 1 auto; min-width: 0; }
+body[data-notice-style="pixel"] .skin-icon { flex: 0 0 auto; width: 16px; height: 16px; display: block; margin-top: 2px; }
+/* The name plate says who is talking; it straddles the frame's top rule. */
+body[data-notice-style="pixel"] .skin-plate {
+  display: block; position: absolute; top: -16px; left: 4px; padding: 4px 7px;
+  /* Silkscreen is drawn on an 8px grid; any other size blurs C into O. */
+  font: 400 8px/1 "Notice Silkscreen", ui-monospace, Consolas, monospace; letter-spacing: 0.08em;
+  background: #1D1A17; color: var(--plate-ink, #E8987A); border: 2px solid #000;
+}
+body[data-notice-style="pixel"] .card[data-theme="calico"] .skin-plate { --plate-ink: #F2C277; }
+body[data-notice-style="pixel"] .card[data-theme="cloudling"] .skin-plate { --plate-ink: #CFC8FF; }
+body[data-notice-style="pixel"] .card[data-level="warn"] .skin-plate { background: #7A4A0E; color: #FFE7B8; }
+body[data-notice-style="pixel"] .card[data-level="error"] .skin-plate { background: #B23A1F; color: #FFF7EE; }
+body[data-notice-style="pixel"] .card-dismiss { top: -4px; right: -4px; width: 24px; height: 24px; border-radius: 0; opacity: 0.45; }
+body[data-notice-style="pixel"] .copy { padding-right: 16px; }
+/* The tail: a 7×5 pixel sprite that breaks through the frame toward the pet. */
+body[data-notice-style="pixel"] .skin-tail { position: absolute; display: block; pointer-events: none; }
+body[data-notice-style="pixel"] .card[data-tail="bottom"] .skin-tail { top: calc(100% + 4px); left: 30px; width: 14px; height: 10px; }
+body[data-notice-style="pixel"] .card[data-tail="top"] .skin-tail { bottom: calc(100% + 4px); left: 30px; width: 14px; height: 10px; }
+body[data-notice-style="pixel"] .card[data-tail="left"] .skin-tail { right: calc(100% + 4px); top: 18px; width: 10px; height: 14px; }
+body[data-notice-style="pixel"] .card[data-tail="right"] .skin-tail { left: calc(100% + 4px); top: 18px; width: 10px; height: 14px; }
+/* more-text chevron: blinks three times once the text is out, then holds */
+body[data-notice-style="pixel"] .skin-more {
+  display: block; position: absolute; right: 2px; bottom: 1px; width: 10px; height: 6px;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='5' height='3' shape-rendering='crispEdges'%3E%3Cpath d='M0 0h5v1h-1v1h-1v1h-1v-1h-1v-1h-1z' fill='%23B8552F'/%3E%3C/svg%3E") 0 0 / 100% 100%;
+}
+body[data-notice-style="pixel"] .skin-more.typing { visibility: hidden; }
+body[data-notice-style="pixel"] .skin-more.blink { animation: skin-blink 600ms steps(1, end) 3; }
+@keyframes skin-blink { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
+body[data-notice-style="pixel"] .skin-heart { position: absolute; top: -6px; width: 14px; height: 12px; pointer-events: none; animation: skin-rise 900ms steps(6, end) both; }
+@keyframes skin-rise { 0% { translate: 0 4px; opacity: 0; } 15% { opacity: 1; } 100% { translate: 0 -10px; opacity: 0; } }
+body[data-notice-style="pixel"] .card.entering { animation: skin-px-open 240ms steps(4, end); }
+body[data-notice-style="pixel"] .card.entering[data-level="error"] { animation: skin-px-open 240ms steps(4, end), skin-px-shake 360ms steps(1, end) 240ms; }
+body[data-notice-style="pixel"] .card[data-tail="bottom"] { transform-origin: 37px 100%; }
+body[data-notice-style="pixel"] .card[data-tail="top"] { transform-origin: 37px 0; }
+body[data-notice-style="pixel"] .card[data-tail="left"] { transform-origin: 0 25px; }
+body[data-notice-style="pixel"] .card[data-tail="right"] { transform-origin: 100% 25px; }
+@keyframes skin-px-open { from { transform: scale(0.2, 0.1); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+@keyframes skin-px-shake {
+  0% { translate: 0; } 16% { translate: -4px 0; } 33% { translate: 4px 0; }
+  50% { translate: -2px 0; } 66% { translate: 2px 0; } 83% { translate: 0; }
+}
+
+/* Reduced motion: both skins arrive with a short fade and nothing else moves.
+   (The card style keeps its own block above.) */
+@media (prefers-reduced-motion: reduce) {
+  body[data-notice-style="comic"] .card.entering,
+  body[data-notice-style="pixel"] .card.entering { animation: skin-fade 120ms !important; }
+  body[data-notice-style] .skin-stamp,
+  body[data-notice-style] .skin-more { animation: none !important; }
+  body[data-notice-style] .skin-heart { display: none !important; }
+}
+@keyframes skin-fade { from { opacity: 0; } }
 </style>
 </head>
 <body>
+<!-- The comic style's hand-drawn wobble: one shared filter whose noise seed the
+     script steps for a moment after a card arrives or is hovered. -->
+<svg class="skin-defs" aria-hidden="true" focusable="false">
+  <filter id="notice-boil" x="-8%" y="-8%" width="116%" height="116%">
+    <feTurbulence id="notice-boil-noise" type="fractalNoise" baseFrequency="0.035" numOctaves="2" seed="1" result="noise"/>
+    <feDisplacementMap in="SourceGraphic" in2="noise" scale="3" xChannelSelector="R" yChannelSelector="G"/>
+  </filter>
+</svg>
 <div class="stack" id="stack"></div>
 <script>
 const stack = document.getElementById("stack");
@@ -818,6 +993,389 @@ function applyPresentation(elements, side) {
   document.body.dataset.tail = side;
 }
 
+// ── Notice styles (comic / pixel) ─────────────────────────────────────────
+// The "card" style is everything above, untouched. The two other styles reuse
+// the same card skeleton and add a skin: comic draws an ink outline around the
+// laid-out card, pixel adds a name plate, sprites and a pixel tail. All of it
+// is built node by node; no notice text is ever parsed as markup.
+const NOTICE_STYLES = new Set(["pixel", "comic", "card"]);
+const DEFAULT_NOTICE_STYLE = "pixel";
+const PIXEL_PALETTE = {
+  K: "#1D1A17", W: "#FFF7EE", B: "#3C6FD8", Y: "#E8B04B", A: "#C98A1E",
+  G: "#2F9E5B", L: "#7FD49D", R: "#D13B3B", P: "#F28A8A", D: "#B23A1F",
+};
+const PIXEL_ICONS = {
+  info:    ["..BBBB..", ".BBWWBB.", "BBBBBBBB", "BBBWWBBB", "BBBWWBBB", "BBBWWBBB", ".BBWWBB.", "..BBBB.."],
+  success: [".RR..RR.", "RPRRRRRR", "RPRRRRRR", "RRRRRRRR", ".RRRRRR.", "..RRRR..", "...RR...", "........"],
+  warn:    ["...AA...", "...AA...", "..AYYA..", "..AKKA..", ".AYKKYA.", ".AYYYYA.", "AYYKKYYA", "AAAAAAAA"],
+  error:   ["..DDDD..", ".DDDDDD.", "DWWDDWWD", "DWWDDWWD", "DDDDDDDD", ".DDWWDD.", ".DWDDWD.", "..DDDD.."],
+};
+const PIXEL_HEART = [".RR.RR.", "RPRRRRR", "RRRRRRR", ".RRRRR.", "..RRR..", "...R..."];
+// The pixel tail as it hangs below the frame. C is the theme's frame colour;
+// the other sides are this grid flipped or transposed.
+const PIXEL_TAIL = ["CWWWWWC", "KCWWWCK", ".KCWCK.", "..KCK..", "...K..."];
+const PIXEL_FRAME = { clawd: "#DE886D", calico: "#E8A354", cloudling: "#B1A7FF" };
+const SKIN_BOIL_MS = 1800;
+
+function tailRows(side) {
+  const h = PIXEL_TAIL.length;
+  const w = PIXEL_TAIL[0].length;
+  if (side === "bottom") return PIXEL_TAIL;
+  if (side === "top") return PIXEL_TAIL.slice().reverse();
+  const rows = [];
+  for (let y = 0; y < w; y += 1) {
+    let row = "";
+    for (let x = 0; x < h; x += 1) {
+      row += side === "left" ? PIXEL_TAIL[h - 1 - x][y] : PIXEL_TAIL[x][y];
+    }
+    rows.push(row);
+  }
+  return rows;
+}
+
+function buildSprite(rows, className, palette) {
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("class", className);
+  svg.setAttribute("viewBox", `0 0 ${rows[0].length} ${rows.length}`);
+  svg.setAttribute("shape-rendering", "crispEdges");
+  svg.setAttribute("aria-hidden", "true");
+  for (let y = 0; y < rows.length; y += 1) {
+    for (let x = 0; x < rows[y].length; x += 1) {
+      const color = palette[rows[y][x]];
+      if (!color) continue;
+      const rect = document.createElementNS(SVG_NS, "rect");
+      rect.setAttribute("x", String(x));
+      rect.setAttribute("y", String(y));
+      rect.setAttribute("width", "1");
+      rect.setAttribute("height", "1");
+      rect.setAttribute("fill", color);
+      svg.appendChild(rect);
+    }
+  }
+  return svg;
+}
+
+// Types the last text node of `line` in place. A hidden copy keeps the line at
+// its final size from the first frame, so the card never grows while it types.
+// Returns when it will be done, in ms from now.
+function typeLine(line, delay, cps) {
+  let node = line.lastChild;
+  while (node && node.nodeType !== 3) node = node.previousSibling;
+  if (!node || !node.data) return delay;
+  const text = node.data;
+  const wrap = document.createElement("span");
+  wrap.className = "skin-type";
+  const ghost = document.createElement("span");
+  ghost.className = "skin-type-ghost";
+  ghost.setAttribute("aria-hidden", "true");
+  ghost.textContent = text;
+  const live = document.createElement("span");
+  wrap.appendChild(ghost);
+  wrap.appendChild(live);
+  line.replaceChild(wrap, node);
+  const chars = Array.from(text);
+  // A long line types faster rather than taking forever.
+  const step = Math.min(1000 / cps, 1600 / Math.max(chars.length, 1));
+  let at = delay;
+  for (const ch of chars) {
+    setTimeout(() => { live.textContent += ch; }, at);
+    at += /[，。！？、,.!?：:]/.test(ch) ? step * 4 : step;
+  }
+  return at;
+}
+// Comic geometry, all in the card's own pixel space (y down). The outline is
+// a superellipse; on the carrier card a horn grows out of it toward the pet.
+// Body and horn are one path, so there is no seam for anything to show through.
+function superPoint(cx, cy, a, b, p, t) {
+  const c = Math.cos(t);
+  const s = Math.sin(t);
+  return [
+    cx + a * Math.sign(c) * Math.pow(Math.abs(c), 2 / p),
+    cy + b * Math.sign(s) * Math.pow(Math.abs(s), 2 / p),
+  ];
+}
+
+function outlinePoints(w, h, p) {
+  const cx = w / 2;
+  const cy = h / 2;
+  const points = [];
+  const n = 96;
+  for (let k = 0; k < n; k += 1) {
+    points.push(superPoint(cx, cy, cx - 2, cy - 2, p, (k / n) * 2 * Math.PI));
+  }
+  return points;
+}
+
+// Where a horn leaves the outline and where its tip lands, for a side.
+function hornSpec(w, h, side) {
+  if (side === "bottom") return { axis: "x", from: 26, to: 56, edge: h, tip: [34, h + 26] };
+  if (side === "top") return { axis: "x", from: 26, to: 56, edge: 0, tip: [34, -26] };
+  const mid = Math.min(36, h / 2);
+  const tipX = side === "left" ? -26 : w + 26;
+  return { axis: "y", from: mid - 10, to: mid + 10, edge: side === "left" ? 0 : w, tip: [tipX, mid + 8] };
+}
+
+function inHorn(point, spec, w, h) {
+  const v = spec.axis === "x" ? point[0] : point[1];
+  if (v < spec.from || v > spec.to) return false;
+  if (spec.axis === "x") return spec.edge === 0 ? point[1] < h / 2 : point[1] > h / 2;
+  return spec.edge === 0 ? point[0] < w / 2 : point[0] > w / 2;
+}
+
+function fmt(n) {
+  return n.toFixed(1);
+}
+
+function closedPath(points) {
+  return "M" + points.map((pt) => `${fmt(pt[0])} ${fmt(pt[1])}`).join(" L") + "Z";
+}
+
+// Rotate the outline so the horn's run of points sits at its end, then replace
+// that run with two curves out to the tip and back.
+function withHorn(points, spec, w, h) {
+  const n = points.length;
+  let start = -1;
+  for (let k = 0; k < n; k += 1) {
+    if (inHorn(points[k], spec, w, h) && !inHorn(points[(k + n - 1) % n], spec, w, h)) { start = k; break; }
+  }
+  if (start < 0) return closedPath(points);
+  let len = 0;
+  while (len < n && inHorn(points[(start + len) % n], spec, w, h)) len += 1;
+  const a = points[(start + n - 1) % n];
+  const b = points[(start + len) % n];
+  const rest = [];
+  for (let k = 0; k <= n - len - 1; k += 1) rest.push(points[(start + len + k) % n]);
+  const tip = spec.tip;
+  const bend = (from) => [from[0] + (tip[0] - from[0]) * 0.55, from[1] + (tip[1] - from[1]) * 0.15];
+  const c1 = bend(a);
+  const c2 = bend(b);
+  let d = `M${fmt(rest[0][0])} ${fmt(rest[0][1])}`;
+  for (let k = 1; k < rest.length; k += 1) d += ` L${fmt(rest[k][0])} ${fmt(rest[k][1])}`;
+  d += ` Q${fmt(c1[0])} ${fmt(c1[1])} ${fmt(tip[0])} ${fmt(tip[1])}`;
+  d += ` Q${fmt(c2[0])} ${fmt(c2[1])} ${fmt(b[0])} ${fmt(b[1])}Z`;
+  return d;
+}
+
+// A shout: a seeded star around the outline, spikes pushed out along the radius.
+function burstPoints(w, h) {
+  const cx = w / 2;
+  const cy = h / 2;
+  const n = 30;
+  let seed = 7;
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const points = [];
+  for (let k = 0; k < n; k += 1) {
+    const [x, y] = superPoint(cx, cy, cx - 2, cy - 2, 6, (k / n) * 2 * Math.PI);
+    const out = k % 2 === 0 ? 9 + rnd() * 5 : -2;
+    const len = Math.hypot(x - cx, y - cy) || 1;
+    points.push([x + ((x - cx) / len) * out, y + ((y - cy) / len) * out]);
+  }
+  return points;
+}
+
+function comicPath(w, h, level, side) {
+  const points = level === "error" ? burstPoints(w, h) : outlinePoints(w, h, 4.6);
+  return side ? withHorn(points, hornSpec(w, h, side), w, h) : closedPath(points);
+}
+// card element -> { style, ink, path, drawn } for the skin it currently wears.
+const skins = new WeakMap();
+let inkObserver = null;
+let boilUntil = 0;
+let boilTimer = null;
+
+function currentNoticeStyle() {
+  return document.body.dataset.noticeStyle || DEFAULT_NOTICE_STYLE;
+}
+
+function observeInk(element) {
+  if (typeof ResizeObserver !== "function") return;
+  if (!inkObserver) {
+    // One observer for every skinned card: it re-fits the comic outline when a
+    // webfont swaps in, and re-reports the height that swap changed. A card on
+    // its way out is left alone so its collapse does not reposition every frame.
+    inkObserver = new ResizeObserver((entries) => {
+      let resized = false;
+      for (const entry of entries) {
+        if (exiting.has(entry.target)) continue;
+        drawInk(entry.target);
+        resized = true;
+      }
+      if (resized) reportHeight();
+    });
+  }
+  inkObserver.observe(element);
+}
+
+function drawInk(element) {
+  const skin = skins.get(element);
+  if (!skin || !skin.ink) return;
+  const w = element.offsetWidth;
+  const h = element.offsetHeight;
+  if (!w || !h) return;
+  const level = element.dataset.level || "info";
+  const side = element.dataset.tail || "";
+  const key = `${w}x${h}:${level}:${side}`;
+  if (skin.drawn === key) return;
+  skin.drawn = key;
+  const m = 40;
+  skin.ink.setAttribute("viewBox", `${-m} ${-m} ${w + 2 * m} ${h + 2 * m}`);
+  skin.ink.style.left = `${-m}px`;
+  skin.ink.style.top = `${-m}px`;
+  skin.ink.style.width = `${w + 2 * m}px`;
+  skin.ink.style.height = `${h + 2 * m}px`;
+  skin.path.setAttribute("d", comicPath(w, h, level, side));
+}
+
+// The hand-drawn wobble steps its noise for a moment, then holds still: a
+// topmost transparent window repainting a filter forever is not free.
+function boil() {
+  if (prefersReducedMotion() || currentNoticeStyle() !== "comic") return;
+  boilUntil = Date.now() + SKIN_BOIL_MS;
+  if (boilTimer) return;
+  const noise = document.getElementById("notice-boil-noise");
+  if (!noise) return;
+  let seed = 1;
+  boilTimer = setInterval(() => {
+    seed = (seed % 4) + 1;
+    noise.setAttribute("seed", String(seed));
+    if (Date.now() > boilUntil || currentNoticeStyle() !== "comic") {
+      clearInterval(boilTimer);
+      boilTimer = null;
+    }
+  }, 110);
+}
+
+function stripSkin(element) {
+  for (const node of [...element.querySelectorAll(".skin-part, .skin-icon")]) node.remove();
+  if (inkObserver) inkObserver.unobserve(element);
+  skins.delete(element);
+}
+
+function skinPart(tag, className) {
+  const node = document.createElement(tag);
+  node.className = `skin-part ${className}`;
+  node.setAttribute("aria-hidden", "true");
+  return node;
+}
+function buildComicSkin(element, skin) {
+  const ink = document.createElementNS(SVG_NS, "svg");
+  ink.setAttribute("class", "skin-part skin-ink");
+  ink.setAttribute("aria-hidden", "true");
+  const group = document.createElementNS(SVG_NS, "g");
+  group.setAttribute("filter", "url(#notice-boil)");
+  const path = document.createElementNS(SVG_NS, "path");
+  group.appendChild(path);
+  ink.appendChild(group);
+  element.insertBefore(ink, element.firstChild);
+  skin.ink = ink;
+  skin.path = path;
+  const stamp = skinPart("span", "skin-stamp");
+  stamp.textContent = LEVEL_GLYPHS.success;
+  element.appendChild(stamp);
+  observeInk(element);
+}
+
+function buildPixelSkin(element) {
+  element.appendChild(skinPart("span", "skin-plate"));
+  element.appendChild(skinPart("span", "skin-more"));
+  observeInk(element);
+}
+
+// The level sprite leads the first title or body line. The copy block is
+// rebuilt on every in-place update, so this runs again after one.
+function addPixelIcon(element) {
+  const copy = element.querySelector(".copy");
+  if (!copy || copy.querySelector(".skin-icon")) return;
+  const line = copy.querySelector(".title, .body");
+  if (!line) return;
+  const level = LEVELS.has(element.dataset.level) ? element.dataset.level : "info";
+  line.insertBefore(buildSprite(PIXEL_ICONS[level], "skin-icon", PIXEL_PALETTE), line.firstChild);
+}
+
+// The pixel tail follows the carrier: present only where data-tail is set,
+// redrawn when the side or the theme colour changes.
+function syncPixelTail(element) {
+  const side = element.dataset.tail || "";
+  const color = PIXEL_FRAME[element.dataset.theme] || PIXEL_FRAME[DEFAULT_THEME_ID];
+  const key = side ? `${side}:${color}` : "";
+  const existing = element.querySelector(".skin-tail");
+  if (existing && existing.dataset.key === key) return;
+  if (existing) existing.remove();
+  if (!key) return;
+  const palette = { K: "#000", W: "#FFF7EE", C: color };
+  const tail = buildSprite(tailRows(side), "skin-part skin-tail", palette);
+  tail.dataset.key = key;
+  element.appendChild(tail);
+}
+
+function spawnHearts(element) {
+  [["58%", 0], ["72%", 160], ["86%", 320]].forEach(([left, delay]) => {
+    const heart = buildSprite(PIXEL_HEART, "skin-part skin-heart", PIXEL_PALETTE);
+    heart.style.left = left;
+    heart.style.animationDelay = `${delay}ms`;
+    element.appendChild(heart);
+    setTimeout(() => heart.remove(), 1000 + delay);
+  });
+}
+
+// What a freshly arrived card does on its first frame. Updates never get this.
+function playEntrance(element, style) {
+  if (style === "comic") {
+    boil();
+    return;
+  }
+  const more = element.querySelector(".skin-more");
+  if (prefersReducedMotion()) return;
+  const copy = element.querySelector(".copy");
+  const title = copy && copy.querySelector(".title");
+  const body = copy && copy.querySelector(".body");
+  let at = 260;
+  if (title) at = typeLine(title, at, 20);
+  if (body) at = typeLine(body, at + 160, 34);
+  if (element.dataset.level === "success") setTimeout(() => spawnHearts(element), 300);
+  if (more) {
+    more.classList.add("typing");
+    setTimeout(() => {
+      more.classList.remove("typing");
+      more.classList.add("blink");
+    }, at + 120);
+  }
+}
+
+// Dress every live card in the current style. Idempotent: a card already in
+// the right skin keeps it, so a snapshot that changes nothing restyles nothing.
+function refreshSkins(elements, fresh) {
+  const style = currentNoticeStyle();
+  for (const element of elements) {
+    let skin = skins.get(element);
+    if (skin && skin.style !== style) {
+      stripSkin(element);
+      skin = null;
+    }
+    if (style === "card") continue;
+    if (!skin) {
+      skin = { style, ink: null, path: null, drawn: "" };
+      skins.set(element, skin);
+      if (style === "comic") buildComicSkin(element, skin);
+      else buildPixelSkin(element);
+      if (fresh.has(element)) playEntrance(element, style);
+    }
+    if (style === "pixel") {
+      const plate = element.querySelector(".skin-plate");
+      if (plate) {
+        plate.textContent = String(element.dataset.theme || DEFAULT_THEME_ID)
+          .toUpperCase().replace(/[^A-Z0-9-]/g, "").slice(0, 12) || "CLAWD";
+      }
+      addPixelIcon(element);
+      syncPixelTail(element);
+    } else {
+      drawInk(element);
+    }
+  }
+}
+
+stack.addEventListener("pointerover", () => boil());
+
 function show(payload) {
   // A bare array is the shape this channel used before it grew the theme id and
   // the tail side; it still renders.
@@ -828,6 +1386,10 @@ function show(payload) {
     ? data.themeId
     : DEFAULT_THEME_ID;
   presentation.tailSide = TAIL_SIDES.has(data.tailSide) ? data.tailSide : null;
+  // An older main sends no style; it gets the same default the pref has.
+  document.body.dataset.noticeStyle = NOTICE_STYLES.has(data.style) ? data.style : DEFAULT_NOTICE_STYLE;
+  // Cards created by this snapshot, the only ones that play an entrance.
+  const fresh = new Set();
 
   const desired = [];
   const keys = new Set();
@@ -859,6 +1421,7 @@ function show(payload) {
       if (desired.length <= MAX_TAIL_CARDS) element.classList.add("entering");
       rendered.set(entry.key, element);
       signatures.set(element, contentSignature(entry.notice));
+      fresh.add(element);
     } else {
       // The same id with different content is a keyed re-push that replaced its
       // notice in the store (src/notice-store.js keeps the id on purpose). The
@@ -875,6 +1438,7 @@ function show(payload) {
 
   reorder(next);
   applyPresentation(next, next.length > 0 && next.length <= MAX_TAIL_CARDS ? presentation.tailSide : null);
+  refreshSkins(next, fresh);
   if (next.length === 0) {
     // Nothing left to show: the whole stack slides out (main sends the same on
     // an empty store snapshot).

@@ -2287,6 +2287,10 @@ const _noticeBubbleCtx = {
       return "clawd";
     }
   },
+  // The bubble's look (pref noticeBubbleStyle). Read live from the controller,
+  // the single store of truth, so no mirror can drift; notice-bubble.js and the
+  // page both fall back to "pixel" for anything they do not recognise.
+  getNoticeStyle: () => _settingsController.get("noticeBubbleStyle"),
   // Which edge of the stack faces the pet, so the renderer can hang the tail
   // there. Both rects are required: an unpositioned bubble (or an undecidable
   // dead-centre pet) reports null and the renderer simply omits the tail rather
@@ -4941,6 +4945,7 @@ const settingsEffectRouter = createSettingsEffectRouter({
   refreshPermissionAutoCloseForPolicy: () => callRuntimeMethod(_perm, "refreshPermissionAutoCloseForPolicy"),
   hideUpdateBubbleForPolicy: () => callRuntimeMethod(_updateBubble, "hideForPolicy"),
   refreshUpdateBubbleAutoClose: () => callRuntimeMethod(_updateBubble, "refreshAutoCloseForPolicy"),
+  refreshNoticeBubblePresentation: () => callRuntimeMethod(_noticeBubble, "refreshPresentation"),
   repositionFloatingBubbles,
   applyTextScale: () => applyTextScaleNow(),
   syncSessionHudVisibility: () => syncSessionHudVisibility(),

@@ -109,6 +109,8 @@ logs/
 scripts/*
 # Deterministic source-backed macOS tray asset generator
 !scripts/generate-mac-tray-icons.js
+# Rebuilds the subset woff2 files in src/fonts/ (see NOTICE.md)
+!scripts/build-notice-fonts.py
 !scripts/update-official-theme-catalog-snapshot.js
 !scripts/manual/
 scripts/manual/*
