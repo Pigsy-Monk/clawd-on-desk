@@ -333,6 +333,7 @@ const updateRegistry = {
   flashDurationMs: requireNumberInRange("flashDurationMs", 0, 60000),
   testReactionsEnabled: requireBoolean("testReactionsEnabled"),
   noticeReactionsEnabled: requireBoolean("noticeReactionsEnabled"),
+  noticeBubbleStyle: requireEnum("noticeBubbleStyle", ["pixel", "comic", "card"]),
   codexHookHealthNotifyEnabled: requireBoolean("codexHookHealthNotifyEnabled"),
   codexHookHealthLastNotified: requireString("codexHookHealthLastNotified", { allowEmpty: true }),
   telegramMigrationLastNotified: requireString("telegramMigrationLastNotified", { allowEmpty: true }),

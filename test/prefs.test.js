@@ -367,6 +367,14 @@ describe("prefs.validate", () => {
     assert.strictEqual(prefs.validate({ quotaRingDisplayMode: "remaining" }).quotaRingDisplayMode, "remaining");
   });
 
+  it("defaults the notice bubble style to pixel and keeps every supported style", () => {
+    assert.strictEqual(prefs.validate({}).noticeBubbleStyle, "pixel");
+    for (const style of ["pixel", "comic", "card"]) {
+      assert.strictEqual(prefs.validate({ noticeBubbleStyle: style }).noticeBubbleStyle, style);
+    }
+    assert.strictEqual(prefs.validate({ noticeBubbleStyle: "neon" }).noticeBubbleStyle, "pixel");
+  });
+
   it("validates bubble placement enums independently from the follow toggle", () => {
     const valid = prefs.validate({
       bubbleFollowPet: true,

@@ -12,6 +12,7 @@
     "flashDurationMs",
     "testReactionsEnabled",
     "noticeReactionsEnabled",
+    "noticeBubbleStyle",
     "soundVolume",
     "lowPowerIdleMode",
     "keepAwakeWhileWorking",
@@ -513,6 +514,7 @@
         labelKey: "rowNoticeReactions",
         descKey: "rowNoticeReactionsDesc",
       }),
+      buildNoticeBubbleStyleRow(),
       helpers.buildSwitchRow({
         key: "hideBubbles",
         labelKey: "rowHideBubbles",
@@ -1175,6 +1177,56 @@
     controlWrap.appendChild(control.element);
     row.append(text, controlWrap);
     state.mountedControls.quotaRingDisplayMode = control;
+    return row;
+  }
+
+  function buildNoticeBubbleStyleRow() {
+    const row = document.createElement("div");
+    row.className = "row notice-bubble-style-row";
+
+    const text = document.createElement("div");
+    text.className = "row-text";
+    const label = document.createElement("span");
+    label.className = "row-label";
+    label.textContent = t("rowNoticeBubbleStyle");
+    const desc = document.createElement("span");
+    desc.className = "row-desc";
+    desc.textContent = t("rowNoticeBubbleStyleDesc");
+    text.append(label, desc);
+
+    const controlWrap = document.createElement("div");
+    controlWrap.className = "row-control";
+    const control = helpers.buildSegmentedRadio({
+      id: "notice-bubble-style",
+      value: state.snapshot && state.snapshot.noticeBubbleStyle,
+      ariaLabel: t("rowNoticeBubbleStyle"),
+      className: "notice-bubble-style-choice",
+      options: [
+        { value: "pixel", label: t("noticeBubbleStylePixel") },
+        { value: "comic", label: t("noticeBubbleStyleComic") },
+        { value: "card", label: t("noticeBubbleStyleCard") },
+      ],
+      onChange: (next) => {
+        if (!window.settingsAPI || typeof window.settingsAPI.update !== "function") {
+          ops.showToast(t("toastSaveFailed") + "settings API unavailable", { error: true });
+          return false;
+        }
+        return Promise.resolve()
+          .then(() => window.settingsAPI.update("noticeBubbleStyle", next))
+          .then((result) => {
+            if (result && result.status === "ok") return true;
+            ops.showToast(t("toastSaveFailed") + ((result && result.message) || "unknown error"), { error: true });
+            return false;
+          })
+          .catch((err) => {
+            ops.showToast(t("toastSaveFailed") + (err && err.message), { error: true });
+            return false;
+          });
+      },
+    });
+    controlWrap.appendChild(control.element);
+    row.append(text, controlWrap);
+    state.mountedControls.noticeBubbleStyle = control;
     return row;
   }
 
@@ -2739,6 +2791,10 @@
       const control = state.mountedControls.quotaRingDisplayMode;
       if (!control || !document.body.contains(control.element)) return false;
     }
+    if (keys.includes("noticeBubbleStyle")) {
+      const control = state.mountedControls.noticeBubbleStyle;
+      if (!control || !document.body.contains(control.element)) return false;
+    }
     if (keys.includes("quotaAlertThresholds") || keys.includes("quotaAlertsEnabled")) {
       const control = state.mountedControls.quotaAlertThresholds;
       if (!control || !document.body.contains(control.row)) return false;
@@ -2772,6 +2828,7 @@
     for (const key of keys) {
       if (key === "size" || key === "soundVolume" || key === "textScale" || key === "textScaleByDisplay") continue;
       if (key === "quotaRingDisplayMode") continue;
+      if (key === "noticeBubbleStyle") continue;
       if (key === "quotaAlertThresholds") continue;
       if (key === "permissionAutomationMode"
         || key === "permissionAutomationAutoToolsWarningDismissed"
@@ -2794,6 +2851,12 @@
       if (key === "quotaRingDisplayMode") {
         state.mountedControls.quotaRingDisplayMode.setValue(
           state.snapshot && state.snapshot.quotaRingDisplayMode
+        );
+        continue;
+      }
+      if (key === "noticeBubbleStyle") {
+        state.mountedControls.noticeBubbleStyle.setValue(
+          state.snapshot && state.snapshot.noticeBubbleStyle
         );
         continue;
       }

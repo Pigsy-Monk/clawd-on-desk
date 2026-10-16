@@ -38,6 +38,10 @@ const TREND_SERIES_ROW_HEIGHT = 30;
 // nothing (or nonsense) is normalized once instead of in the page.
 const TAIL_SIDES = new Set(["top", "right", "bottom", "left"]);
 const DEFAULT_THEME_ID = "clawd";
+// The bubble's visual style (pref noticeBubbleStyle). The renderer applies the
+// same fallback, so an older main and a newer page still agree.
+const NOTICE_STYLES = new Set(["pixel", "comic", "card"]);
+const DEFAULT_NOTICE_STYLE = "pixel";
 
 function requiredDependency(value, name, owner) {
   if (!value) throw new Error(`${owner} requires ${name}`);
@@ -125,6 +129,9 @@ module.exports = function initNoticeBubble(ctx) {
   let appliedBounds = null;
   // Oldest → newest, exactly the store's snapshot order.
   let notices = [];
+  // The tail side the renderer last heard, so a height-driven move that flips
+  // the side can be told apart from one that does not.
+  let lastSentTailSide = null;
   let presentationActive = false;
   let fullscreenSuppressed = false;
   // A presentation paused by fullscreen or manual pet hiding stays pending
@@ -217,11 +224,35 @@ module.exports = function initNoticeBubble(ctx) {
     const tailSide = typeof ctx.getNoticeBubbleTailSide === "function"
       ? ctx.getNoticeBubbleTailSide()
       : null;
+    const style = typeof ctx.getNoticeStyle === "function" ? ctx.getNoticeStyle() : null;
+    lastSentTailSide = TAIL_SIDES.has(tailSide) ? tailSide : null;
     return {
       notices,
       themeId: typeof themeId === "string" && themeId ? themeId : DEFAULT_THEME_ID,
-      tailSide: TAIL_SIDES.has(tailSide) ? tailSide : null,
+      tailSide: lastSentTailSide,
+      style: NOTICE_STYLES.has(style) ? style : DEFAULT_NOTICE_STYLE,
     };
+  }
+
+  function currentTailSide() {
+    const side = typeof ctx.getNoticeBubbleTailSide === "function" ? ctx.getNoticeBubbleTailSide() : null;
+    return TAIL_SIDES.has(side) ? side : null;
+  }
+
+  // Re-send the current snapshot as it stands, e.g. after the style pref
+  // changed. Only a bubble that is actually presenting gets one: a suspended or
+  // hidden bubble picks the new value up when it is next restored or shown.
+  function refreshPresentation() {
+    if (
+      !bubble
+      || bubble.isDestroyed()
+      || !presentationActive
+      || visibilityRestorePending
+      || notices.length === 0
+      || bubble.webContents.isLoading()
+    ) return false;
+    bubble.webContents.send("notice-bubble-show", presentationPayload());
+    return true;
   }
 
   function maxWindowHeight(workArea) {
@@ -471,6 +502,10 @@ module.exports = function initNoticeBubble(ctx) {
       measuredHeight = next;
       repositionNoticeBubble();
       notifyOrbitGeometryChanged();
+      // The measured height can move the bubble from below the pet to above it
+      // (or across); the tail would keep pointing at the old side until the
+      // next snapshot, so a changed side re-sends the presentation now.
+      if (currentTailSide() !== lastSentTailSide) refreshPresentation();
     }
   }
 
@@ -530,6 +565,7 @@ module.exports = function initNoticeBubble(ctx) {
     visibilityRestorePending = false;
     fullscreenSuppressed = false;
     measuredHeight = 0;
+    lastSentTailSide = null;
     expandedNoticeId = null;
   }
 
@@ -543,6 +579,7 @@ module.exports = function initNoticeBubble(ctx) {
     showNoticeBubble,
     hideNoticeBubble,
     repositionNoticeBubble,
+    refreshPresentation,
     handleNoticeBubbleHeight,
     handleNoticeBubbleDismiss,
     handleNoticeBubbleExpand,

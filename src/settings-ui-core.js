@@ -102,6 +102,7 @@
       formFields: new Set(),
       disposableScopes: new Map(),
       quotaRingDisplayMode: null,
+      noticeBubbleStyle: null,
       permissionAutomationMode: null,
       aboutAutoUpdate: null,
       aboutUpdateStatus: null,
@@ -1956,6 +1957,7 @@
     state.mountedControls.roamMovementStyle = null;
     state.mountedControls.bubblePlacement = null;
     state.mountedControls.quotaRingDisplayMode = null;
+    state.mountedControls.noticeBubbleStyle = null;
     state.mountedControls.quotaAlertThresholds = null;
     state.mountedControls.permissionAutomationMode = null;
     state.mountedControls.roamArea = null;
