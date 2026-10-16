@@ -1,0 +1,37 @@
+src/notice-bubble.html
+  s_138ac6a86ccdd7::t_2349085b8ed426 343-365
+  s_138ac6a86ccdd7::t_9e4bdd1ad1f195 866-875
+  s_138ac6a86ccdd7::t_76295d20822839 816-829
+  s_138ac6a86ccdd7::t_9129f9399b1806 537-540,542
+  s_138ac6a86ccdd7::t_fabfb150fb5e26 541
+src/preload-notice-bubble.js
+  s_138ac6a86ccdd7::t_30aaa619204e42 9
+src/notice-bubble.js
+  s_138ac6a86ccdd7::t_c6a64f2cc6c75c 551-571
+  s_138ac6a86ccdd7::t_19a97a41176065 89
+  s_138ac6a86ccdd7::t_514ae2d66d2120 630
+  s_138ac6a86ccdd7::t_2c8ce57e3f9bb9 46-66
+  s_138ac6a86ccdd7::t_735b0470a969ff 78
+  s_138ac6a86ccdd7::t_dc88d1b83a5113 645
+test/notice-bubble.test.js
+  s_138ac6a86ccdd7::t_c56e186d503c7c 504-510
+  s_138ac6a86ccdd7::t_e31ed898b95527 438,452,457,464,470,479
+  s_138ac6a86ccdd7::t_6f5c4672a2cc67 567-578
+  s_138ac6a86ccdd7::t_96e6a9b101599b 403-434
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.50-trip",
+  "base_commit_sha": "55f0b3609043b1ebb72b95a20e96661e20698e53",
+  "prompts": {},
+  "sessions": {
+    "s_138ac6a86ccdd7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "47868ab7-a9cb-4264-bc3b-40f38125fd3e",
+        "model": "claude-opus-5.5"
+      },
+      "human_author": "zwsong <zwsong@trip.com>"
+    }
+  }
+}
