@@ -6,4 +6,5 @@ contextBridge.exposeInMainWorld("noticeBubbleAPI", {
   reportHeight: (height) => ipcRenderer.send("notice-bubble-height", height),
   dismiss: (id) => ipcRenderer.send("notice-bubble-dismiss", id),
   expand: (id) => ipcRenderer.send("notice-bubble-expand", id),
+  copy: (id) => ipcRenderer.send("notice-bubble-copy", id),
 });

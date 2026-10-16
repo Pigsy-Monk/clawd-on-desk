@@ -400,10 +400,42 @@ describe("renderer-driven dismissal and expand", () => {
     bubble.cleanup();
     assert.equal(bubble.getExpandedNoticeId(), null, "cleanup drops the recorded id");
   });
+
+  it("copies a card's text from the store, only for its own renderer", () => {
+    const written = [];
+    const ctx = createCtx({ writeClipboard: (text) => written.push(text) });
+    const bubble = initNoticeBubble(ctx);
+    ctx.noticeStore.push(notice("n1", { title: "推送被拒了", body: "member_check 拦下了" }));
+    ctx.noticeStore.push(notice("n2", {
+      title: "引擎发布监控", body: "", kind: "trend",
+      series: [
+        { name: "耗时", points: [150, 174], value: 174, unit: "ms" },
+        { name: "失败率", points: [0.08, 0.18], value: null, unit: "%" },
+      ],
+    }));
+    const win = bubble.getBubbleWindow();
+
+    assert.equal(bubble.handleNoticeBubbleCopy({ sender: win.webContents }, "n1"), true);
+    assert.equal(written.pop(), "推送被拒了\nmember_check 拦下了");
+    assert.equal(bubble.handleNoticeBubbleCopy({ sender: win.webContents }, "n2"), true);
+    assert.equal(written.pop(), "引擎发布监控\n耗时 174ms\n失败率 0.18%", "a null value falls back to the last point");
+
+    assert.equal(bubble.handleNoticeBubbleCopy({ sender: {} }, "n1"), false, "a foreign sender copies nothing");
+    assert.equal(bubble.handleNoticeBubbleCopy({ sender: win.webContents }, "gone"), false, "an unknown id copies nothing");
+    assert.equal(bubble.handleNoticeBubbleCopy({ sender: win.webContents }, ""), false);
+    assert.equal(written.length, 0);
+
+    const failing = initNoticeBubble(createCtx({ writeClipboard: () => { throw new Error("busy"); } }));
+    failing.showNoticeBubble([notice("n3")]);
+    assert.equal(failing.handleNoticeBubbleCopy({ sender: failing.getBubbleWindow().webContents }, "n3"), false,
+      "a clipboard failure is reported, not thrown");
+    failing.cleanup();
+    bubble.cleanup();
+  });
 });
 
 describe("registerNoticeBubbleIpc", () => {
-  it("registers the height, dismiss and expand channels and disposes them", () => {
+  it("registers the height, dismiss, expand and copy channels and disposes them", () => {
     const channels = [];
     const removed = [];
     const ipcMain = {
@@ -417,23 +449,25 @@ describe("registerNoticeBubbleIpc", () => {
         handleNoticeBubbleHeight: (event, height) => { forwarded.push(["height", event, height]); },
         handleNoticeBubbleDismiss: (event, id) => { forwarded.push(["dismiss", event, id]); },
         handleNoticeBubbleExpand: (event, id) => { forwarded.push(["expand", event, id]); },
+        handleNoticeBubbleCopy: (event, id) => { forwarded.push(["copy", event, id]); },
       },
     });
     assert.deepEqual(
       channels.map((entry) => entry.channel),
-      ["notice-bubble-height", "notice-bubble-dismiss", "notice-bubble-expand"]
+      ["notice-bubble-height", "notice-bubble-dismiss", "notice-bubble-expand", "notice-bubble-copy"]
     );
     for (const entry of channels) entry.listener("evt", 120);
     assert.deepEqual(forwarded, [
       ["height", "evt", 120],
       ["dismiss", "evt", 120],
       ["expand", "evt", 120],
+      ["copy", "evt", 120],
     ]);
     registration.dispose();
     // dispose() unwinds its disposers LIFO, so compare as a set.
     assert.deepEqual(
       removed.slice().sort(),
-      ["notice-bubble-dismiss", "notice-bubble-expand", "notice-bubble-height"]
+      ["notice-bubble-copy", "notice-bubble-dismiss", "notice-bubble-expand", "notice-bubble-height"]
     );
   });
 
@@ -442,6 +476,7 @@ describe("registerNoticeBubbleIpc", () => {
       handleNoticeBubbleHeight() {},
       handleNoticeBubbleDismiss() {},
       handleNoticeBubbleExpand() {},
+      handleNoticeBubbleCopy() {},
     };
     assert.throws(() => registerNoticeBubbleIpc({}), /registerNoticeBubbleIpc requires ipcMain/);
     assert.throws(
@@ -465,6 +500,13 @@ describe("registerNoticeBubbleIpc", () => {
         noticeBubble: { handleNoticeBubbleHeight() {}, handleNoticeBubbleDismiss() {} },
       }),
       /registerNoticeBubbleIpc requires noticeBubble.handleNoticeBubbleExpand/
+    );
+    assert.throws(
+      () => registerNoticeBubbleIpc({
+        ipcMain: { on() {}, removeListener() {} },
+        noticeBubble: { handleNoticeBubbleHeight() {}, handleNoticeBubbleDismiss() {}, handleNoticeBubbleExpand() {} },
+      }),
+      /registerNoticeBubbleIpc requires noticeBubble.handleNoticeBubbleCopy/
     );
     const registration = registerNoticeBubbleIpc({
       ipcMain: { on() {}, removeListener() {} },
@@ -520,6 +562,18 @@ describe("notice-bubble.html", () => {
     const source = textOf(findAll(document, (node) => node.name === "script")[0]);
     assert.match(source, /window\.noticeBubbleAPI\.dismiss\(/);
     assert.match(source, /window\.noticeBubbleAPI\.expand\(/);
+  });
+
+  it("copies on right-click through the bridge, leaving left-click alone", () => {
+    const source = textOf(findAll(document, (node) => node.name === "script")[0]);
+    const handler = source.match(/card\.addEventListener\("contextmenu", \(event\) => \{([\s\S]*?)\n  \}\);/);
+    assert.ok(handler, "the card listens for contextmenu");
+    assert.match(handler[1], /event\.preventDefault\(\);/, "no native menu");
+    assert.match(handler[1], /window\.noticeBubbleAPI\.copy\(id\);/, "only the id crosses the bridge");
+    assert.doesNotMatch(handler[1], /dismiss|expand/, "a right-click never closes or expands");
+    assert.doesNotMatch(source, /navigator\.clipboard|document\.execCommand/, "the page never touches the clipboard");
+    const preload = fs.readFileSync(path.join(__dirname, "..", "src", "preload-notice-bubble.js"), "utf8");
+    assert.match(preload, /copy: \(id\) => ipcRenderer\.send\("notice-bubble-copy", id\)/);
   });
 
   // The card was a generic soft-UI panel: hairline border, big radius, blurred
