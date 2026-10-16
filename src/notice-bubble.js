@@ -43,6 +43,27 @@ const DEFAULT_THEME_ID = "clawd";
 const NOTICE_STYLES = new Set(["pixel", "comic", "card"]);
 const DEFAULT_NOTICE_STYLE = "pixel";
 
+function formatSeriesValue(entry) {
+  const points = Array.isArray(entry.points) ? entry.points : [];
+  const value = Number.isFinite(entry.value) ? entry.value : points[points.length - 1];
+  return Number.isFinite(value) ? `${value}${entry.unit || ""}` : "—";
+}
+
+// What a right-click copies: the title, the body, and for a trend card one
+// "name value" line per series — what the card says, as plain text.
+function noticeCopyText(notice) {
+  if (!notice) return "";
+  const lines = [];
+  if (notice.title) lines.push(String(notice.title));
+  if (notice.body) lines.push(String(notice.body));
+  if (Array.isArray(notice.series)) {
+    for (const entry of notice.series) {
+      if (entry && entry.name) lines.push(`${entry.name} ${formatSeriesValue(entry)}`);
+    }
+  }
+  return lines.join("\n");
+}
+
 function requiredDependency(value, name, owner) {
   if (!value) throw new Error(`${owner} requires ${name}`);
   return value;
@@ -54,6 +75,7 @@ function registerNoticeBubbleIpc(options = {}) {
   requiredDependency(noticeBubble.handleNoticeBubbleHeight, "noticeBubble.handleNoticeBubbleHeight", "registerNoticeBubbleIpc");
   requiredDependency(noticeBubble.handleNoticeBubbleDismiss, "noticeBubble.handleNoticeBubbleDismiss", "registerNoticeBubbleIpc");
   requiredDependency(noticeBubble.handleNoticeBubbleExpand, "noticeBubble.handleNoticeBubbleExpand", "registerNoticeBubbleIpc");
+  requiredDependency(noticeBubble.handleNoticeBubbleCopy, "noticeBubble.handleNoticeBubbleCopy", "registerNoticeBubbleIpc");
   const disposers = [];
 
   function on(channel, listener) {
@@ -64,6 +86,7 @@ function registerNoticeBubbleIpc(options = {}) {
   on("notice-bubble-height", (event, height) => noticeBubble.handleNoticeBubbleHeight(event, height));
   on("notice-bubble-dismiss", (event, id) => noticeBubble.handleNoticeBubbleDismiss(event, id));
   on("notice-bubble-expand", (event, id) => noticeBubble.handleNoticeBubbleExpand(event, id));
+  on("notice-bubble-copy", (event, id) => noticeBubble.handleNoticeBubbleCopy(event, id));
 
   return {
     dispose() {
@@ -525,6 +548,27 @@ module.exports = function initNoticeBubble(ctx) {
     return true;
   }
 
+  // Renderer → main copy (right-click on a card). The page sends only the id:
+  // the text comes from the store, never from the renderer, and main owns the
+  // clipboard, so the page needs no clipboard access and no focus.
+  function handleNoticeBubbleCopy(event, id) {
+    const senderWin = BrowserWindow.fromWebContents(event.sender);
+    if (!bubble || senderWin !== bubble) return false;
+    if (typeof id !== "string" || id.length === 0) return false;
+    const notice = notices.find((entry) => entry && entry.id === id);
+    const text = noticeCopyText(notice);
+    if (!text) return false;
+    try {
+      const write = typeof ctx.writeClipboard === "function"
+        ? ctx.writeClipboard
+        : (value) => require("electron").clipboard.writeText(value);
+      write(text);
+    } catch {
+      return false;
+    }
+    return true;
+  }
+
   // The expanded chart window owns the actual presentation; this only records
   // the request and hands it on. A throwing consumer must never take the IPC
   // handler (and with it the recorded id) down.
@@ -583,6 +627,7 @@ module.exports = function initNoticeBubble(ctx) {
     handleNoticeBubbleHeight,
     handleNoticeBubbleDismiss,
     handleNoticeBubbleExpand,
+    handleNoticeBubbleCopy,
     syncVisibility,
     suspendForPetHidden,
     suspendForFullscreen,
@@ -597,4 +642,5 @@ module.exports.registerNoticeBubbleIpc = registerNoticeBubbleIpc;
 
 module.exports.__test = {
   estimateNoticeStackHeight,
+  noticeCopyText,
 };
