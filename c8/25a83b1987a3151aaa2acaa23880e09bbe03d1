@@ -1,0 +1,19 @@
+.gitignore
+  s_138ac6a86ccdd7::t_95b060aba0ddb7 112-113
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.50-trip",
+  "base_commit_sha": "c825a83b1987a3151aaa2acaa23880e09bbe03d1",
+  "prompts": {},
+  "sessions": {
+    "s_138ac6a86ccdd7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "47868ab7-a9cb-4264-bc3b-40f38125fd3e",
+        "model": "claude-opus-5.5"
+      },
+      "human_author": "zwsong <zwsong@trip.com>"
+    }
+  }
+}
