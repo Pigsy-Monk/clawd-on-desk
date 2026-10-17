@@ -155,6 +155,18 @@ describe("notice stack height estimate", () => {
     assert.equal(threeSeries - oneSeries, 60, "one row per extra series");
   });
 
+  it("makes room for an image notice's thumbnail, but not for a trend card's chart", () => {
+    const image = { mime: "image/png", data: "iVBORw0KGgo=" };
+    const text = estimateNoticeStackHeight([notice("n1")]);
+    assert.equal(estimateNoticeStackHeight([notice("n1", { image })]) - text, 130);
+    const trend = notice("n1", { kind: "trend", series: [{ name: "cpu", points: [1], value: 1, unit: "" }] });
+    assert.equal(
+      estimateNoticeStackHeight([{ ...trend, image }]),
+      estimateNoticeStackHeight([trend]),
+      "a trend card's image lives in the expanded window"
+    );
+  });
+
   it("survives a trend notice with no series list at all", () => {
     assert.equal(estimateNoticeStackHeight([notice("n1", { kind: "trend" })]), 150);
     assert.equal(estimateNoticeStackHeight([notice("n1", { kind: "trend", series: null })]), 150);
@@ -640,6 +652,26 @@ describe("notice-bubble.html", () => {
     assert.doesNotMatch(source, /outerHTML/);
     assert.doesNotMatch(source, /insertAdjacentHTML/);
     assert.doesNotMatch(source, /document\.write/);
+  });
+
+  it("shows an image notice's picture as a thumbnail that opens it large", () => {
+    const source = textOf(findAll(document, (node) => node.name === "script")[0]);
+    const css = textOf(findAll(document, (node) => node.name === "style")[0]);
+    // Only a verified PNG, as base64, reaches the loader; no other notice value
+    // is ever set as an attribute.
+    assert.match(source, /image\.mime !== "image\/png"/);
+    assert.match(source, /const BASE64_RE = \/\^\[A-Za-z0-9\+\/\]\+=\{0,2\}\$\/;/);
+    assert.match(source, /img\.src = "data:image\/png;base64," \+ thumb;/);
+    // A trend card keeps its sparklines; its image stays in the expanded window.
+    assert.match(source, /const thumb = series\.length \? "" : imageDataOf\(notice\);/);
+    // A card with a picture expands on click like a chart card; the × dismisses.
+    assert.match(source, /if \(card\.dataset\.expandable === "true"\) window\.noticeBubbleAPI\.expand\(id\);/);
+    assert.match(source, /notice\.kind === "trend" \|\| imageDataOf\(notice\)/);
+    // The thumbnail's decoded size is reported, and a re-pushed picture redraws.
+    assert.match(source, /img\.addEventListener\("load", reportHeight\);/);
+    assert.match(source, /imageFingerprint\(notice\),\n  \]\);/);
+    assert.match(css, /\.thumb \{[^}]*max-height: 120px;/);
+    assert.match(css, /\.card\[data-expandable="true"\] \{ cursor: zoom-in; \}/);
   });
 
   it("routes dismiss and expand through the preload bridge", () => {

@@ -34,6 +34,8 @@ const TEXT_LINE_HEIGHT = 16;
 const WRAP_CHARS = 40;
 // A trend card trades the body block for one row per series.
 const TREND_SERIES_ROW_HEIGHT = 30;
+// An image notice's thumbnail on a text card: its CSS max-height plus margin.
+const IMAGE_THUMB_HEIGHT = 130;
 
 // The renderer's own presentation hints, validated here so a ctx that returns
 // nothing (or nonsense) is normalized once instead of in the page.
@@ -117,6 +119,9 @@ function estimateNoticeStackHeight(notices) {
         height += series.length * TREND_SERIES_ROW_HEIGHT;
       } else {
         height += wrappedExtraLines(notice.body) * TEXT_LINE_HEIGHT;
+        if (notice.image && typeof notice.image.data === "string" && notice.image.data) {
+          height += IMAGE_THUMB_HEIGHT;
+        }
       }
     }
   }
