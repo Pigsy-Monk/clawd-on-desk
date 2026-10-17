@@ -29,6 +29,8 @@ function createHarness() {
   const hitBox = { x: 1, y: 2, width: 20, height: 30 };
   const resolvedHitBoxes = [];
   const projection = createDisplayedVisualProjection({ setTimeout: () => 1, clearTimeout() {} });
+  // The notice sign's view of time: how long a live sign has been up (0 = none).
+  const sign = { liveForMs: 0, miniTransitioning: false };
   const context = vm.createContext({
     ...mirror,
     displayedVisualProjection: projection,
@@ -37,7 +39,13 @@ function createHarness() {
     getNearestWorkArea: () => workArea,
     sendRawToRenderer: (...args) => { messages.push(args); return true; },
     inferVisualSource: () => "state",
-    _mini: { getMiniMode: () => false, getMiniEdge: () => "right" },
+    _mini: {
+      getMiniMode: () => false,
+      getMiniEdge: () => "right",
+      getMiniTransitioning: () => sign.miniTransitioning,
+    },
+    doNotDisturb: false,
+    noticeScreenRuntime: { liveForMs: () => sign.liveForMs },
     _state: {
       getCurrentState: () => state.name,
       getCurrentSvg: () => state.file,
@@ -55,7 +63,7 @@ function createHarness() {
     channel: "img",
     verified: true,
   }).accepted, true);
-  return { context, messages, state, theme, projection, hitBox, resolvedHitBoxes, settle,
+  return { context, messages, state, theme, projection, hitBox, resolvedHitBoxes, settle, sign,
     move: (x, wa = workArea) => { bounds = { ...bounds, x }; workArea = wa; } };
 }
 
@@ -107,4 +115,32 @@ test("drag refresh preserves reactions, non-idle states and non-opted-in resting
   h.messages.length = 0;
   assert.equal(h.context.refreshIdleVisualAfterDrag(), null);
   assert.equal(h.messages.length, 0);
+});
+
+test("ordinary state visuals wait while the notice sign is up; urgent ones do not", () => {
+  const h = createHarness();
+  h.sign.liveForMs = 2000;
+  h.messages.length = 0;
+  // A session finishing its turn, an idle animation: held back.
+  assert.equal(h.context.requestDisplayedVisual("attention", "happy.svg"), null);
+  assert.equal(h.context.requestDisplayedVisual("idle", "bubble.svg", { source: "idle-animation" }), null);
+  assert.equal(h.messages.filter(([channel]) => channel === "state-change").length, 0);
+  // Reactions (drag, click) and a permission request still go through.
+  assert.ok(h.context.requestDisplayedVisual("idle", "click.svg", { source: "reaction" }));
+  assert.ok(h.context.requestDisplayedVisual("notification", "notification.svg"));
+  // So does everything under DND or a mini transition.
+  h.context.doNotDisturb = true;
+  assert.ok(h.context.requestDisplayedVisual("attention", "happy.svg"));
+  h.context.doNotDisturb = false;
+  h.sign.miniTransitioning = true;
+  assert.ok(h.context.requestDisplayedVisual("attention", "happy.svg"));
+  h.sign.miniTransitioning = false;
+});
+
+test("no sign, or one up implausibly long, holds nothing back", () => {
+  const h = createHarness();
+  h.sign.liveForMs = 0;
+  assert.ok(h.context.requestDisplayedVisual("attention", "happy.svg"));
+  h.sign.liveForMs = 120000;
+  assert.ok(h.context.requestDisplayedVisual("working", "working.svg"));
 });

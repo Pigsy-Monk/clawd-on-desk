@@ -11247,6 +11247,32 @@ describe("settings renderer browser environment", () => {
     }
   });
 
+  it("renders the notice history switch beside the notice rows with all supported translations", () => {
+    const harness = loadGeneralTabForTest({
+      snapshot: makeGeneralSnapshot({ noticeHistoryEnabled: true }),
+    });
+    harness.renderContent();
+
+    const meta = harness.getSwitchMeta("noticeHistoryEnabled");
+    assert.ok(meta);
+    assert.strictEqual(meta.element.classList.contains("on"), true);
+    assert.strictEqual(meta.row.querySelector(".row-label").textContent, "Notice history");
+    assert.match(meta.row.querySelector(".row-desc").textContent, /7 days/);
+
+    // Same section, directly after the notice style row.
+    const generalSource = fs.readFileSync(path.join(SRC_DIR, "settings-tab-general.js"), "utf8");
+    const styleAt = generalSource.indexOf("buildNoticeBubbleStyleRow(),");
+    const historyAt = generalSource.indexOf('key: "noticeHistoryEnabled"');
+    assert.ok(styleAt > 0 && historyAt > styleAt && historyAt - styleAt < 200);
+
+    const i18nSource = fs.readFileSync(SETTINGS_I18N, "utf8");
+    for (const key of ["rowNoticeHistory", "rowNoticeHistoryDesc"]) {
+      const matches = i18nSource.match(new RegExp(`\\b${key}:`, "g"));
+      assert.strictEqual(matches ? matches.length : 0, SUPPORTED_LANGS.length,
+        `${key} should appear in all ${SUPPORTED_LANGS.length} supported languages`);
+    }
+  });
+
   it("renders Free roam movement style as a dependent segmented choice", async () => {
     const generalSource = fs.readFileSync(path.join(SRC_DIR, "settings-tab-general.js"), "utf8");
     const i18nSource = fs.readFileSync(SETTINGS_I18N, "utf8");

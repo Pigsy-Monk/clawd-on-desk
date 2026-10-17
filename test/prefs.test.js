@@ -375,6 +375,13 @@ describe("prefs.validate", () => {
     assert.strictEqual(prefs.validate({ noticeBubbleStyle: "neon" }).noticeBubbleStyle, "pixel");
   });
 
+  it("defaults notice history on and keeps an explicit off", () => {
+    assert.strictEqual(prefs.getDefaults().noticeHistoryEnabled, true);
+    assert.strictEqual(prefs.validate({}).noticeHistoryEnabled, true);
+    assert.strictEqual(prefs.validate({ noticeHistoryEnabled: false }).noticeHistoryEnabled, false);
+    assert.strictEqual(prefs.validate({ noticeHistoryEnabled: "no" }).noticeHistoryEnabled, true);
+  });
+
   it("validates bubble placement enums independently from the follow toggle", () => {
     const valid = prefs.validate({
       bubbleFollowPet: true,

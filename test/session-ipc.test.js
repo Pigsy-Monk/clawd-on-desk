@@ -120,6 +120,20 @@ function createHarness(overrides = {}) {
       calls.push(["resumeSessionFromHistory", payload]);
       return { status: "ok" };
     }),
+    noticeHistory: Object.prototype.hasOwnProperty.call(overrides, "noticeHistory")
+      ? overrides.noticeHistory
+      : {
+        getSnapshot: () => {
+          calls.push(["getNoticeHistory"]);
+          return { enabled: true, retentionDays: 7, entries: [{ id: "run123:notice-1", title: "Build" }] };
+        },
+        clear: () => { calls.push(["clearNoticeHistory"]); return { status: "ok", removed: 1 }; },
+        get: (id) => (id === "run123:notice-1"
+          ? { id, title: "Build", body: "done", series: [] }
+          : null),
+      },
+    noticeCopyText: (entry) => [entry.title, entry.body].filter(Boolean).join("\n"),
+    writeClipboard: (text) => calls.push(["writeClipboard", text]),
     getDashboardWebContents: overrides.getDashboardWebContents
       || (() => dashboardWebContents),
     quickMode: Object.prototype.hasOwnProperty.call(overrides, "quickMode")
@@ -152,9 +166,12 @@ test("session IPC registers owned channels and disposes them", () => {
   const { ipcMain, runtime } = createHarness();
 
   assert.deepStrictEqual([...ipcMain.handlers.keys()].sort(), [
+    "dashboard:clear-notice-history",
     "dashboard:clear-session-automation-grant",
+    "dashboard:copy-notice",
     "dashboard:get-i18n",
     "dashboard:get-kimi-quota-status",
+    "dashboard:get-notice-history",
     "dashboard:get-session-history",
     "dashboard:get-snapshot",
     "dashboard:hide-session",
@@ -365,6 +382,76 @@ test("session history IPC accepts only the real Dashboard main frame", async () 
     }
   }
   assert.deepStrictEqual(calls, []);
+});
+
+test("notice history IPC accepts only the real Dashboard main frame", async () => {
+  const { ipcMain, calls, trustedDashboardEvent } = createHarness();
+
+  const snapshot = await ipcMain.invokeFrom(trustedDashboardEvent, "dashboard:get-notice-history");
+  assert.strictEqual(snapshot.entries.length, 1);
+  assert.deepStrictEqual(
+    await ipcMain.invokeFrom(trustedDashboardEvent, "dashboard:copy-notice", "run123:notice-1"),
+    { status: "ok" }
+  );
+  assert.deepStrictEqual(
+    await ipcMain.invokeFrom(trustedDashboardEvent, "dashboard:clear-notice-history"),
+    { status: "ok", removed: 1 }
+  );
+  assert.deepStrictEqual(calls, [
+    ["getNoticeHistory"],
+    ["writeClipboard", "Build\ndone"],
+    ["clearNoticeHistory"],
+  ]);
+
+  // Rows are the agent's own words, and clear deletes files: a near-miss
+  // sender reaches none of the three owners.
+  calls.length = 0;
+  for (const event of [
+    { sender: trustedDashboardEvent.sender },
+    { sender: {}, senderFrame: trustedDashboardEvent.senderFrame },
+    { sender: trustedDashboardEvent.sender, senderFrame: { ...trustedDashboardEvent.senderFrame } },
+  ]) {
+    for (const channel of [
+      "dashboard:get-notice-history",
+      "dashboard:copy-notice",
+      "dashboard:clear-notice-history",
+    ]) {
+      assert.deepStrictEqual(
+        await ipcMain.invokeFrom(event, channel, "run123:notice-1"),
+        { status: "error", reason: "untrusted-dashboard-sender" },
+        channel
+      );
+    }
+  }
+  assert.deepStrictEqual(calls, []);
+});
+
+test("copy-notice takes only an id string and copies main's text, not the page's", async () => {
+  const { ipcMain, calls, trustedDashboardEvent } = createHarness();
+  for (const bad of [null, undefined, "", 42, { id: "run123:notice-1", text: "injected" }, "x".repeat(200)]) {
+    assert.deepStrictEqual(
+      await ipcMain.invokeFrom(trustedDashboardEvent, "dashboard:copy-notice", bad),
+      { status: "invalid" },
+      JSON.stringify(bad)
+    );
+  }
+  assert.deepStrictEqual(
+    await ipcMain.invokeFrom(trustedDashboardEvent, "dashboard:copy-notice", "run123:missing"),
+    { status: "not-found" }
+  );
+  assert.deepStrictEqual(calls, []);
+});
+
+test("without a notice history owner the Notices channels are not registered", () => {
+  const { ipcMain } = createHarness({ noticeHistory: null });
+  for (const channel of [
+    "dashboard:get-notice-history",
+    "dashboard:copy-notice",
+    "dashboard:clear-notice-history",
+  ]) {
+    assert.strictEqual(ipcMain.handlers.has(channel), false, channel);
+  }
+  assert.ok(ipcMain.handlers.has("dashboard:get-session-history"));
 });
 
 test("resume-session takes exactly an agentId/opaque-historyKey pair", async () => {

@@ -55,6 +55,12 @@ const HIDDEN_MOUTH_FILES = Object.freeze([
   "clawd-mini-sleep.svg",
 ]);
 
+// Sprites added after PR #811 that never carry a mouth accessory. They sit
+// outside the approved 38 so that set stays the PR's decision record.
+const POST_PR811_HIDDEN_FILES = Object.freeze([
+  "clawd-notice-screen.svg",
+]);
+
 const OPTIONAL_LIBRARY_FILES = Object.freeze([
   "clawd-about-hero.svg",
   "clawd-aegyo-shy.svg",
@@ -74,7 +80,9 @@ test("mouth policy covers the approved 38 stock sprites exactly", () => {
   const files = theme.customization.mouthAccessories.files;
   const stockFiles = Object.fromEntries(
     Object.entries(files).filter(([file]) => (
-      file !== "clawd-outlaw-bender.svg" && !OPTIONAL_LIBRARY_FILES.includes(file)
+      file !== "clawd-outlaw-bender.svg"
+      && !OPTIONAL_LIBRARY_FILES.includes(file)
+      && !POST_PR811_HIDDEN_FILES.includes(file)
     ))
   );
 
@@ -85,6 +93,10 @@ test("mouth policy covers the approved 38 stock sprites exactly", () => {
   );
   assert.strictEqual(Object.keys(stockFiles).length, 38);
   assert.deepStrictEqual(files["clawd-outlaw-bender.svg"], { visibility: "hidden" });
+  for (const file of POST_PR811_HIDDEN_FILES) {
+    assert.deepStrictEqual(files[file], { visibility: "hidden" }, file);
+    assert.deepStrictEqual(theme.customization.accessories.files[file], { visibility: "hidden" }, file);
+  }
   assert.deepStrictEqual(
     files["clawd-working-typing-boss.svg"],
     { visibility: "hidden" },
@@ -279,7 +291,12 @@ test("bender uses the one-unit anti-crop viewBox and its measured face-plant hit
     cooldownMs: 1800000,
     requiresAccessories: { head: "western-cowboy-hat", mouth: "cigarette" },
   }]);
-  assert.deepStrictEqual(theme.rendering.objectChannelFiles, ["clawd-outlaw-bender.svg"]);
+  // The notice head screen joined the document channel later (its text is
+  // written into the SVG document); the bender's entry is unchanged.
+  assert.deepStrictEqual(theme.rendering.objectChannelFiles, [
+    "clawd-outlaw-bender.svg",
+    "clawd-notice-screen.svg",
+  ]);
   assert.deepStrictEqual(theme.fileViewBoxes["clawd-outlaw-bender.svg"], {
     x: -15,
     y: -25,

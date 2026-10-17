@@ -155,8 +155,10 @@ const { createTrayBalloonOwner } = require("./tray-balloon-owner");
 const initUpdateBubble = require("./update-bubble");
 const { registerUpdateBubbleIpc } = initUpdateBubble;
 const { createNoticeStore } = require("./notice-store");
+const { createNoticeHistory } = require("./notice-history");
 const initNoticeBubble = require("./notice-bubble");
 const { registerNoticeBubbleIpc } = initNoticeBubble;
+const { noticeCopyText } = require("./notice-text");
 const initNoticeChartWindow = require("./notice-chart-window");
 const { registerNoticeChartIpc } = initNoticeChartWindow;
 const createSettingsAnimationOverridesMain = require("./settings-animation-overrides-main");
@@ -201,6 +203,7 @@ const { createDisplayedVisualProjection } = require("./displayed-visual-projecti
 const { getRightSideMirrorFiles, isVisualMirrored, resolveMirroredFile } = require("./mirrored-files");
 const { createTestReactionHandler } = require("./test-reaction");
 const { createNoticeReactionHandler } = require("./notice-reaction");
+const { createNoticeScreenRuntime, registerNoticeScreenIpc } = require("./notice-screen-runtime");
 const createMacHideController = require("./mac-hide");
 const {
   getFocusableLocalHudSessionIds: selectFocusableLocalHudSessionIds,
@@ -1555,8 +1558,29 @@ function syncPetScreenSide() {
   sendRawToRenderer("pet-screen-side", petOnRightSide);
 }
 
+// While the notice sign is up, ordinary state visuals wait: the renderer asks
+// for the current state again when the pose ends (resume-from-reaction), so a
+// session finishing a turn no longer knocks the sign away mid-read. Reactions
+// (drag, click), a permission request, DND and mini mode still go through at
+// once, and a pose up implausibly long stops holding anything back.
+const NOTICE_SIGN_MAX_DEFER_MS = 120000;
+function shouldDeferForNoticeSign(displayState, options) {
+  const source = options.source || "";
+  if (source === "reaction") return false;
+  if (displayState === "notification" || doNotDisturb) return false;
+  if (_mini.getMiniMode() || _mini.getMiniTransitioning()) return false;
+  try {
+    const liveFor = noticeScreenRuntime.liveForMs();
+    return liveFor > 0 && liveFor < NOTICE_SIGN_MAX_DEFER_MS;
+  } catch {
+    // Not created yet (early boot): nothing to defer for.
+    return false;
+  }
+}
+
 function requestDisplayedVisual(displayState, file, options = {}) {
   if (!displayedVisualProjection) return null;
+  if (shouldDeferForNoticeSign(displayState, options)) return null;
   const activeTheme = getActiveTheme();
   // Re-sampled on every idle request, so a drag or roam since the last idle
   // animation is picked up before the next one starts.
@@ -1682,6 +1706,44 @@ function requestClickReaction(file, duration) {
   });
 }
 
+// A notice on a theme with a head screen (reactions["notice-screen"]) goes
+// through the displayed-visual contract like a click reaction, so the
+// committed visual's fileHitBoxes entry — body plus the zoomed screen — takes
+// over the hit window while the pose is up. Returns false (the caller falls
+// back to the per-level reaction) when the theme has no such reaction or the
+// request could not be delivered.
+function resolveNoticeScreenFile() {
+  const activeTheme = getActiveTheme();
+  const entry = activeTheme && activeTheme.reactions && activeTheme.reactions["notice-screen"];
+  const file = entry && (Array.isArray(entry.files) ? entry.files[0] : entry.file);
+  if (typeof file !== "string" || !collectRequiredAssetFiles(activeTheme).includes(file)) return null;
+  return file;
+}
+
+// Whether a notice arriving now will be shown on the sign: then its card is
+// held back until the board is clicked (or the sign is cut short).
+function canShowNoticeSign() {
+  return typeof handleNoticeReaction.canPlay === "function"
+    && handleNoticeReaction.canPlay()
+    && !!resolveNoticeScreenFile();
+}
+
+function requestNoticeScreenReaction(payload, notice) {
+  const file = resolveNoticeScreenFile();
+  if (!file) return false;
+  noticeScreenRuntime.begin(payload, notice, file);
+  let delivered = false;
+  requestDisplayedVisual(_state.getCurrentState(), file, {
+    source: "reaction",
+    deliver: (visualRequest) => {
+      delivered = sendRawToRenderer("play-notice-reaction", { ...payload, visualRequest });
+      return delivered;
+    },
+  });
+  if (!delivered) noticeScreenRuntime.reset();
+  return delivered;
+}
+
 function sendToRenderer(channel, ...args) {
   if (channel === "state-change") {
     return requestDisplayedVisual(args[0], args[1], args[2] || {});
@@ -1736,6 +1798,7 @@ function syncHitStateAfterLoad() {
     miniMode: _mini.getMiniMode(),
     dndEnabled: doNotDisturb,
   });
+  noticeScreenRuntime.syncHitWindow();
 }
 
 function syncRendererStateAfterLoad({ includeStartupRecovery = true } = {}) {
@@ -2251,8 +2314,46 @@ const {
 // for the server ctx below and for the bubble's store subscription.
 const noticeStore = createNoticeStore();
 
+// The notice head screen (clawd's "notice-screen" reaction): main's half is
+// input forwarding, the copy-on-right-click and the hit window's gate. Its
+// dependencies are read lazily, so it can exist before the windows do.
+const noticeScreenRuntime = createNoticeScreenRuntime({
+  getRenderWebContents: () => (win && !win.isDestroyed() ? win.webContents : null),
+  getHitWebContents: () => (hitWin && !hitWin.isDestroyed() ? hitWin.webContents : null),
+  getHitWindowBounds: () => (hitWin && !hitWin.isDestroyed() ? hitWin.getBounds() : null),
+  getPetWindowBounds: () => getPetWindowBounds(),
+  getCursorScreenPoint: () => (typeof screen.getCursorScreenPoint === "function" ? screen.getCursorScreenPoint() : null),
+  getAssetPointerPayload: (bounds, point) => getAssetPointerPayload(bounds, point),
+  getCommittedFile: () => {
+    const committed = displayedVisualProjection && displayedVisualProjection.getSnapshot().committed;
+    return committed ? committed.file : null;
+  },
+  sendToRenderer: (channel, payload) => sendRawToRenderer(channel, payload),
+  sendToHitWin: (channel, payload) => sendToHitWin(channel, payload),
+  writeClipboard: (text) => clipboard.writeText(text),
+  // _noticeBubble is created further down; both fire only after startup.
+  onSignClick: () => _noticeBubble.revealHeldNotices(),
+  onPoseInterrupted: () => _noticeBubble.revealHeldNotices(),
+});
+
+// Local notice history (~/.clawd/notice-history-v1) for the Dashboard's
+// Notices tab. It only observes store snapshots — memory on the notice path,
+// disk on a timer — and reads the pref live from the controller. The
+// Dashboard is created further down, so its change signal is late-bound
+// through broadcastDashboardNoticeHistory, like the other Dashboard forwards.
+let broadcastDashboardNoticeHistory = () => {};
+const noticeHistory = createNoticeHistory({
+  isEnabled: () => _settingsController.get("noticeHistoryEnabled") === true,
+  onChange: () => broadcastDashboardNoticeHistory(),
+});
+noticeStore.subscribe((snapshot) => noticeHistory.observe(snapshot));
+
 const _noticeBubbleCtx = {
   noticeStore,
+  // Option chosen with the user: while the pet holds a new notice up on its
+  // sign the card stays back; clicking the board opens it. handleNoticeReaction
+  // is defined further down and only consulted once notices arrive.
+  shouldHoldNewNotices: () => canShowNoticeSign(),
   get win() { return win; },
   // Deliberate: the notice stack is the pet "speaking", so it always follows
   // the pet. It ignores the global bubble-follow prefs (bubbleFollowPet
@@ -2464,6 +2565,14 @@ function buildRendererThemeConfig(accessorySnapshot = null) {
           payload: canonical.payloads.mouth,
         },
       };
+      // The slots now carry both attachment maps; the top-level copies are
+      // only the renderer's legacy fallback for a config without slots. Drop
+      // them: this config rides on the render window's command line
+      // (--theme-config), and on Windows the whole renderer command line must
+      // stay under 32767 characters — with both maps sent twice the clawd
+      // theme was already within a few hundred characters of that limit.
+      delete cfg.accessoryAttachments;
+      delete cfg.mouthAccessoryAttachments;
     }
   }
   return cfg;
@@ -2626,6 +2735,7 @@ displayedVisualProjection = createDisplayedVisualProjection({
   },
   onCommit: (visual) => {
     syncDisplayedVisualGeometry();
+    noticeScreenRuntime.handleVisualCommitted(visual);
     try { repositionAnchoredFloatingSurfaces(); } catch {}
     if (visual.source === "reaction") return;
     lastDiscordPresenceVisual = {
@@ -2946,6 +3056,11 @@ broadcastDashboardSessionSnapshot = (snapshot) => {
 sendDashboardI18n = () => {
   _dashboard.sendI18n();
 };
+broadcastDashboardNoticeHistory = () => {
+  _dashboard.notifyNoticeHistoryChanged();
+};
+// The Notices tab shows whether recording is on, so a flip re-reads it.
+_settingsController.subscribeKey("noticeHistoryEnabled", () => broadcastDashboardNoticeHistory());
 // The quick host is a real window whose own `close` handler refuses to close
 // (it is a borrow surface for the shared page, not something the user destroys).
 // Electron closes every window BEFORE `will-quit`, so disposing it only there
@@ -5350,6 +5465,9 @@ registerSessionIpc({
     sessionAutomationCoordinator.clearSessionAutomationGrant(payload),
   getSessionHistory: () => sessionHistoryRuntime.getHistory(),
   resumeSessionFromHistory: (payload) => sessionHistoryRuntime.resume(payload),
+  noticeHistory,
+  noticeCopyText,
+  writeClipboard: (text) => clipboard.writeText(text),
   showDashboard: (options) => showDashboard(options),
   setSessionHudPinned: (value) => {
     const result = _settingsController.applyUpdate("sessionHudPinned", !!value);
@@ -5478,7 +5596,11 @@ function createWindow() {
 
   registerPetInteractionIpc({
     ipcMain,
-    showContextMenu: (event) => showPetContextMenu(event),
+    // A right-click on the notice head screen copies the notice instead.
+    showContextMenu: (event, point) => {
+      if (noticeScreenRuntime.handleContextMenu(event, point)) return;
+      showPetContextMenu(event);
+    },
     moveWindowForDrag: () => moveWindowForDrag(),
     setIdlePaused: (value) => { idlePaused = !!value; },
     setLowPowerIdlePaused,
@@ -5558,6 +5680,11 @@ function createWindow() {
   registerNoticeBubbleIpc({
     ipcMain,
     noticeBubble: _noticeBubble,
+  });
+
+  registerNoticeScreenIpc({
+    ipcMain,
+    noticeScreen: noticeScreenRuntime,
   });
 
   registerNoticeChartIpc({
@@ -5809,7 +5936,9 @@ const handleTestResult = createTestReactionHandler({
 // ── Notice reactions ──
 // Same gate and same shape as the test-result reaction above; the difference is
 // the trigger (an agent-pushed notice landing in the store) and the payload
-// (the card's level, which the renderer turns into an animation).
+// (the card's level, which the renderer turns into an animation, plus its id
+// and headline for a theme with a head screen — see
+// requestNoticeScreenReaction).
 const handleNoticeReaction = createNoticeReactionHandler({
   getEnabled: () => _settingsController.get("noticeReactionsEnabled") === true,
   getDoNotDisturb: () => doNotDisturb,
@@ -5819,6 +5948,7 @@ const handleNoticeReaction = createNoticeReactionHandler({
   isDragging: () => petWindowRuntime.isDragLocked(),
   hasPetWindow: () => !!(win && !win.isDestroyed()),
   sendToRenderer,
+  playNoticeScreen: (payload, notice) => requestNoticeScreenReaction(payload, notice),
 });
 
 // React once per snapshot, not once per notice: a burst of cards arriving
@@ -5826,7 +5956,9 @@ const handleNoticeReaction = createNoticeReactionHandler({
 // notice in the batch speaks for the whole batch. The snapshot delivered on
 // subscribe is the baseline, not news — every id in it predates us, and an
 // empty store simply never fires.
-let lastNoticeIds = null;
+// The store does not replay on subscribe, so its current contents (empty at
+// boot) are the baseline and the first notice pushed after start counts.
+let lastNoticeIds = new Set(noticeStore.list().map((notice) => notice && notice.id));
 noticeStore.subscribe((snapshot) => {
   const notices = Array.isArray(snapshot) ? snapshot : [];
   const ids = new Set();
@@ -5839,7 +5971,12 @@ noticeStore.subscribe((snapshot) => {
   }
   lastNoticeIds = ids;
   if (!newest) return;
-  handleNoticeReaction(newest.level);
+  // The whole notice: the handler takes level, id and headline from it, and
+  // the sign keeps it for copy-on-right-click.
+  handleNoticeReaction(newest);
+  // The bubble held the new cards for the sign; if the sign is not showing
+  // this notice after all (another theme, a gate, delivery failed), show them.
+  if (noticeScreenRuntime.getPendingId() !== newest.id) _noticeBubble.revealHeldNotices();
 });
 const { enterMiniMode, exitMiniMode, enterMiniViaMenu, miniPeekIn, miniPeekOut,
         checkMiniModeSnap, cancelMiniTransition, animateWindowX, animateWindowParabola } = _mini;
@@ -6166,6 +6303,10 @@ if (!gotTheLock) {
     createWindow();
     try { recapRuntime.start(); }
     catch (err) { console.warn("Clawd: local recap startup failed:", err && err.code ? err.code : "storage-error"); }
+    // Reads up to a week of small day files and prunes them; start() logs and
+    // swallows its own failures, the catch is only a backstop.
+    try { noticeHistory.start(); }
+    catch (err) { console.warn("Clawd: notice history startup failed:", err && err.message); }
     // Reconcile the local quota binding only after the app has visible UI.
     // initialize() reads opaque credential metadata but never decrypts the key
     // or performs a network request, so ordinary startup cannot be held behind
@@ -6325,6 +6466,8 @@ if (!gotTheLock) {
     _updateBubble.cleanup();
     _noticeBubble.cleanup();
     _noticeChart.cleanup();
+    // Before the store goes: writes each on-screen card's final version.
+    try { noticeHistory.dispose(); } catch {}
     noticeStore.dispose();
     if (displayedVisualProjection) displayedVisualProjection.dispose();
     try { recapRuntime.dispose(); } catch {}

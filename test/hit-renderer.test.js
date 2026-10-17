@@ -58,7 +58,7 @@ function createHarness({ isMac = false, sendState = {} } = {}) {
         dragLock: (v) => apiCalls.push(["dragLock", v]),
         dragMove: () => apiCalls.push(["dragMove"]),
         dragEnd: () => apiCalls.push(["dragEnd"]),
-        showContextMenu: () => apiCalls.push(["showContextMenu"]),
+        showContextMenu: (point) => apiCalls.push(["showContextMenu", point]),
         focusTerminal: () => apiCalls.push(["focusTerminal"]),
         exitMiniMode: () => apiCalls.push(["exitMiniMode"]),
         showDashboard: () => apiCalls.push(["showDashboard"]),
@@ -74,6 +74,7 @@ function createHarness({ isMac = false, sendState = {} } = {}) {
         getPathForFile: (file) => (file && file.path) || "",
         dropPaths: (paths) => apiCalls.push(["dropPaths", paths]),
         onDropAccepted: (cb) => { apiHandlers.dropAccepted = cb; },
+        noticeScreenPointer: (input) => apiCalls.push(["noticeScreenPointer", input]),
       },
       addEventListener: () => {},
     },
@@ -453,5 +454,72 @@ describe("hit-renderer stranded drag release", () => {
     h.pointerdown({});
     h.pointermove({ clientX: 140, clientY: 140, buttons: 0 });
     assert.deepStrictEqual(h.apiCalls.filter((c) => c[0] === "dragLock"), []);
+  });
+});
+
+describe("hit-renderer notice head screen", () => {
+  function noticeCalls(h) {
+    // Payloads are built in the vm realm; compare their plain shape.
+    return JSON.parse(JSON.stringify(h.apiCalls.filter((c) => c[0] === "noticeScreenPointer").map((c) => c[1])));
+  }
+
+  it("keeps double-click reactions from replacing the pose while it is up", () => {
+    const h = createHarness();
+    h.apiHandlers.stateSync({ noticeScreenActive: true });
+    h.pointerup({});
+    h.pointerup({});
+    h.pointerup({});
+    h.pointerup({});
+    h.fireTimer((t) => t.ms === 400);
+    const names = h.apiCalls.map((c) => c[0]);
+    assert.ok(!names.includes("playClickReaction"), "click reactions are gated during the pose");
+    assert.ok(names.includes("revealSessionHud"), "a single click still reveals the HUD");
+
+    h.apiHandlers.stateSync({ noticeScreenActive: false });
+    h.pointerup({});
+    h.pointerup({});
+    h.pointerup({});
+    h.pointerup({});
+    assert.ok(h.apiCalls.some((c) => c[0] === "playClickReaction"), "the gate lifts with the pose");
+  });
+
+  it("forwards hover moves once per frame only while the pose is up", () => {
+    const h = createHarness();
+    h.pointermove({ clientX: 10, clientY: 10, buttons: 0 });
+    h.fireTimer((t) => t.ms === 16);
+    assert.deepStrictEqual(noticeCalls(h), [], "nothing is forwarded outside the pose");
+
+    h.apiHandlers.stateSync({ noticeScreenActive: true });
+    h.pointermove({ clientX: 10, clientY: 10, buttons: 0 });
+    h.pointermove({ clientX: 12, clientY: 14, buttons: 0 });
+    assert.deepStrictEqual(noticeCalls(h), [], "coalesced until the frame");
+    h.fireTimer((t) => t.ms === 16);
+    assert.deepStrictEqual(noticeCalls(h), [{ type: "move", clientX: 12, clientY: 14 }]);
+  });
+
+  it("forwards wheel and window-leave, and a cancel stops forwarding", () => {
+    const h = createHarness();
+    h.apiHandlers.stateSync({ noticeScreenActive: true });
+    h.context.document._dispatch("wheel", { clientX: 5, clientY: 6, deltaY: -100, deltaMode: 0 });
+    h.context.document._dispatch("pointerout", { relatedTarget: { id: "child" } });
+    h.context.document._dispatch("pointerout", { relatedTarget: null });
+    assert.deepStrictEqual(noticeCalls(h), [
+      { type: "wheel", clientX: 5, clientY: 6, deltaY: -100, deltaMode: 0 },
+      { type: "leave" },
+    ]);
+
+    h.apiHandlers.cancelReaction();
+    h.context.document._dispatch("wheel", { clientX: 5, clientY: 6, deltaY: -100, deltaMode: 0 });
+    assert.strictEqual(noticeCalls(h).length, 2);
+  });
+
+  it("sends the right-click point so main can tell the screen from the pet", () => {
+    const h = createHarness();
+    let prevented = false;
+    h.context.document._dispatch("contextmenu", { clientX: 33, clientY: 44, preventDefault: () => { prevented = true; } });
+    assert.ok(prevented);
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(h.apiCalls.filter((c) => c[0] === "showContextMenu"))), [
+      ["showContextMenu", { clientX: 33, clientY: 44 }],
+    ]);
   });
 });

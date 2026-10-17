@@ -7,6 +7,7 @@ const langListeners = new Set();
 const quickIntentListeners = new Set();
 const quickEntriesListeners = new Set();
 const quickDismissedListeners = new Set();
+const noticeHistoryListeners = new Set();
 
 // The Dashboard keyboard mode only exists on darwin/win32, where main registers
 // its channels. Anywhere else the bridge must not expose methods that would
@@ -38,6 +39,11 @@ ipcRenderer.on("dashboard:lang-change", (_event, payload) => {
     try { cb(payload); } catch (err) { console.warn("dashboard lang listener threw:", err); }
   }
 });
+
+// A bare "the notice history changed" signal. It carries no entries: the page
+// re-reads through the trusted invoke only while the Notices tab is showing.
+ipcRenderer.on("dashboard:notice-history-changed", () =>
+  notify(noticeHistoryListeners, undefined, "notice history"));
 
 // Dashboard keyboard mode. Narrow surface: learn about a round, refresh the
 // frozen entries, learn a round ended, and the request calls. No generic
@@ -77,6 +83,10 @@ contextBridge.exposeInMainWorld("dashboardAPI", {
     ipcRenderer.invoke("dashboard:clear-session-automation-grant", payload),
   getSessionHistory: () => ipcRenderer.invoke("dashboard:get-session-history"),
   resumeSession: (payload) => ipcRenderer.invoke("dashboard:resume-session", payload),
+  getNoticeHistory: () => ipcRenderer.invoke("dashboard:get-notice-history"),
+  clearNoticeHistory: () => ipcRenderer.invoke("dashboard:clear-notice-history"),
+  copyNotice: (id) => ipcRenderer.invoke("dashboard:copy-notice", id),
+  onNoticeHistoryChanged: subscribe(noticeHistoryListeners),
   ackCompletion: (sessionId) => ipcRenderer.invoke("session:ack-completion", sessionId),
   onSessionSnapshot: (cb) => {
     if (typeof cb !== "function") return () => {};

@@ -318,6 +318,11 @@ const SCHEMA = {
   // How notice cards are drawn: a pixel dialog box on the pet's own grid, a
   // comic speech balloon, or the original sticker card.
   noticeBubbleStyle: { type: "string", default: "pixel", enum: ["pixel", "comic", "card"] },
+  // Keep a local copy of pushed notices (~/.clawd/notice-history-v1, 7 days)
+  // for the Dashboard's Notices tab. Default ON: the card is the user's own
+  // agent talking to them, and once dismissed its text is otherwise gone.
+  // Off only stops new recording; clearing is an explicit Dashboard action.
+  noticeHistoryEnabled: { type: "boolean", default: true },
   lowPowerIdleMode: { type: "boolean", default: false },
   mobilePreviewEnabled: { type: "boolean", default: false },
   // Separate, explicit consent for the broader permission-summary disclosure.

@@ -23,6 +23,10 @@ if (window.hitAPI && window.hitAPI.onThemeConfig) {
 let currentState = null;
 let miniMode = false;
 let dndEnabled = false;
+// True while the notice head screen pose is on screen (main decides: the
+// render window reported it up and it is the committed visual). It gates the
+// click reactions below and turns on hover/wheel forwarding.
+let noticeScreenActive = false;
 
 window.hitAPI.onStateSync((data) => {
   if (data.currentState !== undefined) currentState = data.currentState;
@@ -31,6 +35,10 @@ window.hitAPI.onStateSync((data) => {
     area.style.cursor = miniMode ? "default" : "";
   }
   if (data.dndEnabled !== undefined) dndEnabled = data.dndEnabled;
+  if (data.noticeScreenActive !== undefined) {
+    noticeScreenActive = data.noticeScreenActive === true;
+    if (!noticeScreenActive) clearQueuedNoticePointer();
+  }
 });
 
 // --- Drag state ---
@@ -52,7 +60,37 @@ window.hitAPI.onCancelReaction(() => {
   isReacting = false;
   isDragReacting = false;
   dragReactionDirection = null;
+  // A real state change also ends the head-screen pose in the render window.
+  noticeScreenActive = false;
+  clearQueuedNoticePointer();
 });
+
+// --- Notice head screen input (hover zoom, wheel zoom) ---
+// The render window ignores the mouse and main pauses cursor polling during
+// reactions, so while the pose is up this window reports the pointer itself.
+// Moves are coalesced to one per frame; main converts them to viewBox units.
+let noticePointerRAF = null;
+let noticePointerPoint = null;
+
+function queueNoticePointer(e) {
+  if (!noticeScreenActive || typeof window.hitAPI.noticeScreenPointer !== "function") return;
+  noticePointerPoint = { clientX: e.clientX, clientY: e.clientY };
+  if (noticePointerRAF !== null) return;
+  noticePointerRAF = requestAnimationFrame(() => {
+    noticePointerRAF = null;
+    const point = noticePointerPoint;
+    noticePointerPoint = null;
+    if (!point || !noticeScreenActive || isDragging) return;
+    window.hitAPI.noticeScreenPointer({ type: "move", ...point });
+  });
+}
+
+function clearQueuedNoticePointer() {
+  noticePointerPoint = null;
+  if (noticePointerRAF === null) return;
+  cancelAnimationFrame(noticePointerRAF);
+  noticePointerRAF = null;
+}
 
 function queueDragMove() {
   if (dragMoveRAF !== null) return;
@@ -111,8 +149,32 @@ document.addEventListener("pointermove", (e) => {
     }
     lastDragClientX = e.clientX;
     queueDragMove();
+  } else if (noticeScreenActive) {
+    queueNoticePointer(e);
   }
 });
+
+// Leaving the window (relatedTarget null) is a leave for the head screen too:
+// the hit window is larger than the zoomed screen, but a fast exit can skip
+// the moves in between.
+document.addEventListener("pointerout", (e) => {
+  if (!noticeScreenActive || (e && e.relatedTarget)) return;
+  clearQueuedNoticePointer();
+  if (typeof window.hitAPI.noticeScreenPointer === "function") {
+    window.hitAPI.noticeScreenPointer({ type: "leave" });
+  }
+});
+
+document.addEventListener("wheel", (e) => {
+  if (!noticeScreenActive || isDragging || typeof window.hitAPI.noticeScreenPointer !== "function") return;
+  window.hitAPI.noticeScreenPointer({
+    type: "wheel",
+    clientX: e.clientX,
+    clientY: e.clientY,
+    deltaY: e.deltaY,
+    deltaMode: e.deltaMode,
+  });
+}, { passive: true });
 
 function stopDrag() {
   if (!isDragging) return;
@@ -153,6 +215,16 @@ document.addEventListener("pointerup", (e) => {
     return;
   }
 
+  // While the notice sign is up, a click on the board opens the notice's
+  // card instead of counting as a poke; main knows where the board is.
+  if (noticeScreenActive && typeof window.hitAPI.noticeScreenClick === "function") {
+    const clientX = e.clientX;
+    window.hitAPI.noticeScreenClick({ clientX, clientY: e.clientY }).then((handled) => {
+      if (!handled) handleClick(clientX);
+    });
+    return;
+  }
+
   handleClick(e.clientX);
 });
 
@@ -187,8 +259,11 @@ function resetClickAccumulator() {
 
 // Fresh-read at reaction timer fire time, NOT closured at click time —
 // state / DND may change inside the 400 ms accumulator window.
+// The notice head screen is a reaction main started, not one this window
+// tracks in isReacting, so it is gated separately: a poke must not replace
+// the notice while it is being read.
 function canPlayReactionNow() {
-  return currentState === "idle" && !dndEnabled && !isReacting;
+  return currentState === "idle" && !dndEnabled && !isReacting && !noticeScreenActive;
 }
 
 function handleClick(clientX) {
@@ -331,7 +406,9 @@ if (!isMac) {
 }
 
 // --- Right-click context menu ---
+// The point goes along so main can tell a right-click on the notice head
+// screen (copy its text) from one anywhere else on the pet (this menu).
 document.addEventListener("contextmenu", (e) => {
   e.preventDefault();
-  window.hitAPI.showContextMenu();
+  window.hitAPI.showContextMenu({ clientX: e.clientX, clientY: e.clientY });
 });

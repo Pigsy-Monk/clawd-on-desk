@@ -882,8 +882,327 @@ button:disabled {
 
 .hidden { display: none !important; }
 
+/* ── Tabs: Sessions / Notices ─────────────────────────────────────────────
+   The two panels share one scroller slot; only the selected one is shown, and
+   each keeps its own scroll position. The tab bar sits on the header's bottom
+   border so the selected tab reads as attached to the panel below. */
+.panels {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.panels > .content[hidden] { display: none; }
+
+.dashboard-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 12px 0 -15px;
+}
+
+.dashboard-tabs[hidden] { display: none; }
+
+/* Not the accent-filled default button: a quiet text tab whose selected state
+   is weight + an underline, never colour alone. */
+.dashboard-tab {
+  min-width: 0;
+  height: 32px;
+  padding: 0 12px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 6px 6px 0 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.dashboard-tab:hover:not(:disabled) {
+  background: var(--surface-alt);
+  color: var(--text);
+}
+
+.dashboard-tab[aria-selected="true"] {
+  color: var(--text);
+  font-weight: 700;
+  border-bottom-color: var(--accent);
+}
+
+.dashboard-tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* ── Notices panel ────────────────────────────────────────────────────────
+   Level is always carried by a glyph + word badge; the hue and the left rule
+   only reinforce it. */
+:root {
+  --notice-info: #2563eb;
+  --notice-success: #16803c;
+  --notice-warn: #b45309;
+  --notice-error: #dc2626;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --notice-info: #60a5fa;
+    --notice-success: #22c55e;
+    --notice-warn: #f59e0b;
+    --notice-error: #f87171;
+  }
+}
+
+.notices-status {
+  min-height: 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.notices-status:empty { display: none; }
+
+.notices-status:not(:empty) { margin: 0 2px 8px; }
+
+.notices-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 8px;
+}
+
+.notices-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.notices-filter-button,
+.notices-clear-button,
+.notices-row-action,
+.notices-older-button {
+  min-width: 0;
+  height: 26px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.notices-filter-button:hover:not(:disabled),
+.notices-clear-button:hover:not(:disabled),
+.notices-row-action:hover:not(:disabled),
+.notices-older-button:hover:not(:disabled) {
+  background: var(--surface-alt);
+}
+
+.notices-filter-button[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  font-weight: 700;
+}
+
+.notices-clear-button { margin-left: auto; }
+
+.notices-filter-button:focus-visible,
+.notices-clear-button:focus-visible,
+.notices-row-action:focus-visible,
+.notices-older-button:focus-visible,
+.notices-confirm button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.notices-hint {
+  margin: 0 2px 10px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.notices-confirm {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--notice-error) 40%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--notice-error) 8%, var(--surface));
+  font-size: 12px;
+}
+
+.notices-confirm-text { flex: 1 1 200px; min-width: 0; }
+
+.notices-confirm button { min-width: 0; height: 26px; font-size: 11px; }
+
+.notices-confirm .notices-confirm-delete { background: var(--notice-error); }
+
+.notices-confirm .notices-confirm-delete:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--notice-error) 85%, black);
+}
+
+/* The toolbar sits above, so the empty state must not claim full height. */
+.empty.notices-empty {
+  height: auto;
+  min-height: 200px;
+}
+
+.notices-confirm .notices-confirm-cancel {
+  background: var(--surface-alt);
+  color: var(--text);
+  border-color: var(--border);
+}
+
+.notices-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Rows are selectable: copying a fragment by hand must keep working. */
+.notice-row {
+  position: relative;
+  padding: 10px 12px 10px 14px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--notice-info);
+  border-radius: 8px;
+  background: var(--surface);
+  user-select: text;
+}
+
+.notice-row.level-success { border-left-color: var(--notice-success); }
+.notice-row.level-warn { border-left-color: var(--notice-warn); }
+.notice-row.level-error { border-left-color: var(--notice-error); }
+
+.notice-row-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.notice-level {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--notice-info) 14%, transparent);
+  color: var(--notice-info);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.level-success .notice-level {
+  background: color-mix(in srgb, var(--notice-success) 14%, transparent);
+  color: var(--notice-success);
+}
+
+.level-warn .notice-level {
+  background: color-mix(in srgb, var(--notice-warn) 16%, transparent);
+  color: var(--notice-warn);
+}
+
+.level-error .notice-level {
+  background: color-mix(in srgb, var(--notice-error) 14%, transparent);
+  color: var(--notice-error);
+}
+
+.notice-time { font-variant-numeric: tabular-nums; }
+
+.notice-live {
+  padding: 1px 6px;
+  border: 1px dashed var(--muted);
+  border-radius: 5px;
+  font-size: 10px;
+}
+
+.notice-row-head .notices-row-action { margin-left: auto; }
+
+.notice-title {
+  margin-top: 6px;
+  font-weight: 700;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+/* Collapsed bodies show three lines; "Show more" lifts the clamp. */
+.notice-body {
+  margin-top: 4px;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.notice-body.is-clamped {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+}
+
+.notice-toggle {
+  min-width: 0;
+  height: auto;
+  margin-top: 2px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.notice-toggle:hover:not(:disabled) {
+  background: transparent;
+  color: var(--accent-hover);
+  text-decoration: underline;
+}
+
+.notice-series {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+}
+
+.notice-series-name { color: var(--muted); }
+
+.notice-series-value {
+  margin-left: 4px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.notice-image-note {
+  margin-top: 4px;
+  color: var(--subtle);
+  font-size: 11px;
+  font-style: italic;
+}
+
+.notices-older-button { margin-top: 10px; }
+
 @media (max-width: 420px) {
   .header { padding: 16px 16px 12px; }
+  .dashboard-tabs { margin-bottom: -13px; }
   .content { padding: 12px; }
   .card {
     grid-template-columns: 28px minmax(0, 1fr);
@@ -904,8 +1223,25 @@ button:disabled {
       </div>
       <div id="quickBanner" class="quick-banner" role="status" aria-live="polite" hidden></div>
       <div id="quotaSummary" class="quota-summary" hidden></div>
+      <!-- Hidden until the renderer confirms main offers notice history, so a
+           page without it stays the plain Sessions view. -->
+      <div id="dashboardTabs" class="dashboard-tabs" role="tablist" aria-label="Dashboard views" hidden>
+        <button type="button" id="tabSessions" class="dashboard-tab" role="tab"
+          aria-selected="true" aria-controls="content" tabindex="0">Sessions</button>
+        <button type="button" id="tabNotices" class="dashboard-tab" role="tab"
+          aria-selected="false" aria-controls="noticesPanel" tabindex="-1">Notices</button>
+      </div>
     </header>
-    <main id="content" class="content" aria-live="polite" data-language-picker-boundary></main>
+    <!-- <main> may not take role="tabpanel", so it wraps the two panels. -->
+    <main class="panels">
+      <div id="content" class="content" role="tabpanel" aria-labelledby="tabSessions"
+        aria-live="polite" data-language-picker-boundary></div>
+      <section id="noticesPanel" class="content notices-panel" role="tabpanel"
+        aria-labelledby="tabNotices" hidden>
+        <div id="noticesStatus" class="notices-status" role="status" aria-live="polite"></div>
+        <div id="noticesBody"></div>
+      </section>
+    </main>
   </div>
   <script src="./session-focus-unavailable.js"></script>
   <script src="./language-picker.js"></script>

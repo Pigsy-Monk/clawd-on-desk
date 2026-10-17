@@ -120,6 +120,11 @@ async function assertProductionRendererBootsMouthObject() {
       },
     },
   };
+  // Same shape as main.js buildRendererThemeConfig: once the slots carry the
+  // attachment maps the top-level copies are dropped, keeping the renderer
+  // command line (--theme-config) under the Windows length limit.
+  delete config.accessoryAttachments;
+  delete config.mouthAccessoryAttachments;
 
   const win = new BrowserWindow({
     show: false,

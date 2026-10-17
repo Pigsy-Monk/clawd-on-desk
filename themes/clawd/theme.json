@@ -7,7 +7,8 @@
   "repo": "https://github.com/nicepkg/clawd",
   "rendering": {
     "objectChannelFiles": [
-      "clawd-outlaw-bender.svg"
+      "clawd-outlaw-bender.svg",
+      "clawd-notice-screen.svg"
     ]
   },
   "customization": {
@@ -501,6 +502,9 @@
         "clawd-outlaw-bender.svg": {
           "visibility": "hidden"
         },
+        "clawd-notice-screen.svg": {
+          "visibility": "hidden"
+        },
         "clawd-sleeping.svg": {
           "staticFrame": {
             "cx": 7.5,
@@ -966,6 +970,9 @@
         "clawd-outlaw-bender.svg": {
           "visibility": "hidden"
         },
+        "clawd-notice-screen.svg": {
+          "visibility": "hidden"
+        },
         "clawd-sleeping.svg": {
           "visibility": "hidden"
         },
@@ -1302,6 +1309,12 @@
       "y": 1,
       "w": 27,
       "h": 20
+    },
+    "clawd-notice-screen.svg": {
+      "x": -9.75,
+      "y": -15.8,
+      "w": 34.5,
+      "h": 32.8
     }
   },
   "wideHitboxFiles": [
@@ -1350,6 +1363,9 @@
     "idle-look": {
       "file": "clawd-idle-look.svg",
       "duration": 3000
+    },
+    "notice-screen": {
+      "file": "clawd-notice-screen.svg"
     }
   },
   "miniMode": {

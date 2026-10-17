@@ -6,6 +6,7 @@ const { keepOutOfTaskbar } = require("./taskbar");
 const { resolveBubbleWorkArea } = require("./bubble-work-area");
 const { clampTextScale, scaleWidth, scaleHeight, applyZoomToWindow } = require("./text-scale");
 const { computeUpdateBubbleBounds } = require("./update-bubble");
+const { noticeCopyText } = require("./notice-text");
 
 const isLinux = process.platform === "linux";
 const isMac = process.platform === "darwin";
@@ -43,26 +44,8 @@ const DEFAULT_THEME_ID = "clawd";
 const NOTICE_STYLES = new Set(["pixel", "comic", "card"]);
 const DEFAULT_NOTICE_STYLE = "pixel";
 
-function formatSeriesValue(entry) {
-  const points = Array.isArray(entry.points) ? entry.points : [];
-  const value = Number.isFinite(entry.value) ? entry.value : points[points.length - 1];
-  return Number.isFinite(value) ? `${value}${entry.unit || ""}` : "—";
-}
-
-// What a right-click copies: the title, the body, and for a trend card one
-// "name value" line per series — what the card says, as plain text.
-function noticeCopyText(notice) {
-  if (!notice) return "";
-  const lines = [];
-  if (notice.title) lines.push(String(notice.title));
-  if (notice.body) lines.push(String(notice.body));
-  if (Array.isArray(notice.series)) {
-    for (const entry of notice.series) {
-      if (entry && entry.name) lines.push(`${entry.name} ${formatSeriesValue(entry)}`);
-    }
-  }
-  return lines.join("\n");
-}
+// What a right-click copies lives in notice-text.js: the pet's head screen
+// copies the same text, so both surfaces share one definition.
 
 function requiredDependency(value, name, owner) {
   if (!value) throw new Error(`${owner} requires ${name}`);
@@ -150,8 +133,19 @@ module.exports = function initNoticeBubble(ctx) {
   // On Windows that repaints a transparent, always-on-top window, which reads
   // as the card flickering. Repositioning is now idempotent.
   let appliedBounds = null;
-  // Oldest → newest, exactly the store's snapshot order.
+  // The cards on show: the store's snapshot (oldest → newest) minus the ones
+  // held back below.
   let notices = [];
+  // The whole snapshot, held cards included.
+  let allNotices = [];
+  // Cards held back while the pet holds the notice up on its sign. A new
+  // notice is held when ctx.shouldHoldNewNotices says the sign will show it;
+  // revealHeldNotices() (a click on the sign, or a sign cut short) lets them
+  // through. Ids leave the set once the store drops the notice.
+  const heldIds = new Set();
+  // Ids of the last snapshot, so a new notice can be told from a refreshed
+  // one (a keyed re-push keeps its id). Null until the store's first list.
+  let seenIds = null;
   // The tail side the renderer last heard, so a height-driven move that flips
   // the side can be told apart from one that does not.
   let lastSentTailSide = null;
@@ -585,15 +579,40 @@ module.exports = function initNoticeBubble(ctx) {
     return true;
   }
 
-  // Store snapshots are the only trigger: a new snapshot re-renders the whole
-  // stack, an empty one hides the window. TTL expiry is the store's job.
+  function shouldHold(fresh) {
+    if (fresh.length === 0 || typeof ctx.shouldHoldNewNotices !== "function") return false;
+    try {
+      return ctx.shouldHoldNewNotices(fresh) === true;
+    } catch {
+      return false;
+    }
+  }
+
+  // Store snapshots drive the window: a new snapshot re-renders the shown
+  // stack, an empty one hides it. TTL expiry is the store's job.
   function handleNotices(snapshot) {
-    notices = Array.isArray(snapshot) ? snapshot.slice() : [];
+    allNotices = Array.isArray(snapshot) ? snapshot.filter((n) => n && typeof n.id === "string") : [];
+    const ids = new Set(allNotices.map((n) => n.id));
+    for (const id of heldIds) if (!ids.has(id)) heldIds.delete(id);
+    const fresh = seenIds ? allNotices.filter((n) => !seenIds.has(n.id)) : [];
+    seenIds = ids;
+    if (shouldHold(fresh)) for (const n of fresh) heldIds.add(n.id);
+    notices = allNotices.filter((n) => !heldIds.has(n.id));
     if (notices.length === 0) {
       hideNoticeBubble();
       return;
     }
     showNoticeBubble();
+  }
+
+  // Shows every card that was held back for the sign. Returns how many.
+  function revealHeldNotices() {
+    if (heldIds.size === 0) return 0;
+    const count = heldIds.size;
+    heldIds.clear();
+    notices = allNotices.slice();
+    if (notices.length > 0) showNoticeBubble();
+    return count;
   }
 
   function cleanup() {
@@ -611,12 +630,19 @@ module.exports = function initNoticeBubble(ctx) {
     measuredHeight = 0;
     lastSentTailSide = null;
     expandedNoticeId = null;
+    heldIds.clear();
+    allNotices = [];
+    seenIds = null;
   }
 
   if (ctx.noticeStore && typeof ctx.noticeStore.subscribe === "function") {
     unsubscribeStore = ctx.noticeStore.subscribe(handleNotices);
     const initial = typeof ctx.noticeStore.list === "function" ? ctx.noticeStore.list() : [];
-    if (Array.isArray(initial) && initial.length) handleNotices(initial);
+    // The store does not replay on subscribe: what is in it now is the
+    // baseline, so the first notice pushed after this counts as new.
+    const baseline = Array.isArray(initial) ? initial : [];
+    seenIds = new Set(baseline.filter((n) => n && typeof n.id === "string").map((n) => n.id));
+    if (baseline.length) handleNotices(baseline);
   }
 
   return {
@@ -629,6 +655,8 @@ module.exports = function initNoticeBubble(ctx) {
     handleNoticeBubbleExpand,
     handleNoticeBubbleCopy,
     syncVisibility,
+    revealHeldNotices,
+    hasHeldNotices: () => heldIds.size > 0,
     suspendForPetHidden,
     suspendForFullscreen,
     resumeFromFullscreen,

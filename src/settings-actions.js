@@ -334,6 +334,7 @@ const updateRegistry = {
   testReactionsEnabled: requireBoolean("testReactionsEnabled"),
   noticeReactionsEnabled: requireBoolean("noticeReactionsEnabled"),
   noticeBubbleStyle: requireEnum("noticeBubbleStyle", ["pixel", "comic", "card"]),
+  noticeHistoryEnabled: requireBoolean("noticeHistoryEnabled"),
   codexHookHealthNotifyEnabled: requireBoolean("codexHookHealthNotifyEnabled"),
   codexHookHealthLastNotified: requireString("codexHookHealthLastNotified", { allowEmpty: true }),
   telegramMigrationLastNotified: requireString("telegramMigrationLastNotified", { allowEmpty: true }),

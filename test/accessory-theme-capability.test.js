@@ -71,14 +71,21 @@ describe("built-in accessory capability contracts", () => {
     const usages = projectThemeVisualUsages(raw);
     const files = collectRequiredAssetFiles(raw);
 
-    assert.strictEqual(usages.length, 56);
-    assert.strictEqual(files.length, 50);
+    // 57 / 51: reactions["notice-screen"] (the notice head screen) adds one
+    // usage and one required asset, clawd-notice-screen.svg.
+    assert.strictEqual(usages.length, 57);
+    assert.strictEqual(files.length, 51);
     assert.deepStrictEqual(
       new Set(files),
       new Set(fs.readdirSync(path.join(ROOT, "assets", "svg")).filter((file) => file.endsWith(".svg"))),
       "every SVG exposed by the animation picker must have an audited attachment policy"
     );
     assert.ok(files.includes("clawd-outlaw-bender.svg"));
+    assert.ok(files.includes("clawd-notice-screen.svg"));
+    assert.ok(usages.some((usage) => (
+      usage.file === "clawd-notice-screen.svg"
+      && usage.source === "reactions.notice-screen.file"
+    )));
     assert.ok(files.includes("clawd-working-typing-boss.svg"));
     assert.ok(!usages.some((usage) => usage.file === "clawd-working-typing-boss.svg"));
     assert.ok(!usages.some((usage) => usage.source === "rendering.objectChannelFiles"));

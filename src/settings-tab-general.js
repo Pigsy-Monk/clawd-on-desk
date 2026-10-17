@@ -13,6 +13,7 @@
     "testReactionsEnabled",
     "noticeReactionsEnabled",
     "noticeBubbleStyle",
+    "noticeHistoryEnabled",
     "soundVolume",
     "lowPowerIdleMode",
     "keepAwakeWhileWorking",
@@ -515,6 +516,11 @@
         descKey: "rowNoticeReactionsDesc",
       }),
       buildNoticeBubbleStyleRow(),
+      helpers.buildSwitchRow({
+        key: "noticeHistoryEnabled",
+        labelKey: "rowNoticeHistory",
+        descKey: "rowNoticeHistoryDesc",
+      }),
       helpers.buildSwitchRow({
         key: "hideBubbles",
         labelKey: "rowHideBubbles",

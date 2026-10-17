@@ -363,6 +363,9 @@ async function beginQuickRound(revision) {
   quick.entries = Array.isArray(result.entries) ? result.entries : [];
   quick.capture = result.status === "ok" && quick.entries.length > 0;
   quick.active = true;
+  // The digits live on the Sessions cards: a round started while Notices was
+  // showing switches back before anything is painted or measured.
+  selectDashboardTab("sessions");
   // Pin the layout the user is already looking at before the first render of
   // the round, so entering the mode never rearranges existing cards.
   quick.skeleton = quick.capture ? captureQuickSkeleton() : null;
@@ -2224,11 +2227,532 @@ function render(options = {}) {
   restoreSessionAutomationFocus(automationFocusKey);
 }
 
+// ── Tabs + notice history ───────────────────────────────────────────────────
+// The Notices tab is a second panel of this same page. It owns its own tree,
+// rebuilt only when its data, filter or language changes — never on the
+// Sessions one-second tick — and it reads from main only while it is showing.
+// Keyboard mode always belongs to Sessions: a round switches back first, and
+// the Notices tab cannot be selected while one is running.
+const tabsEl = document.getElementById("dashboardTabs");
+const tabSessionsEl = document.getElementById("tabSessions");
+const tabNoticesEl = document.getElementById("tabNotices");
+const noticesPanelEl = document.getElementById("noticesPanel");
+const noticesStatusEl = document.getElementById("noticesStatus");
+const noticesBodyEl = document.getElementById("noticesBody");
+
+const DASHBOARD_TABS = ["sessions", "notices"];
+const NOTICE_LEVELS = ["info", "success", "warn", "error"];
+const NOTICE_LEVEL_LABEL_KEYS = {
+  info: "dashboardNoticesLevelInfo",
+  success: "dashboardNoticesLevelSuccess",
+  warn: "dashboardNoticesLevelWarn",
+  error: "dashboardNoticesLevelError",
+};
+// A glyph per level, next to the word, so the badge never relies on colour.
+const NOTICE_LEVEL_GLYPHS = { info: "i", success: "✓", warn: "!", error: "×" };
+// A body longer than this starts clamped to three lines behind "Show more".
+const NOTICE_BODY_CLAMP_CHARS = 180;
+const NOTICE_BODY_CLAMP_LINES = 3;
+// Rows rendered per page; "Show older" adds another page.
+const NOTICE_PAGE_SIZE = 200;
+const NOTICE_STATUS_MS = 2500;
+const NOTICE_DEFAULT_RETENTION_DAYS = 7;
+
+let activeDashboardTab = "sessions";
+let sessionsScrollTop = 0;
+const notices = {
+  // { enabled, retentionDays, entries } from main; null until the first read.
+  data: null,
+  stale: true,
+  pending: false,
+  reloadRequested: false,
+  filter: "all",
+  expanded: new Set(),
+  limit: NOTICE_PAGE_SIZE,
+  confirmingClear: false,
+  clearing: false,
+  deferredRender: false,
+  statusTimer: null,
+};
+
+function hasNoticeHistoryApi() {
+  const api = window.dashboardAPI;
+  return !!api && typeof api.getNoticeHistory === "function";
+}
+
+function selectDashboardTab(name, options = {}) {
+  if (!DASHBOARD_TABS.includes(name)) return;
+  if (name === "notices" && (!hasNoticeHistoryApi() || quick.active)) return;
+  const previous = activeDashboardTab;
+  if (previous === "sessions" && name !== "sessions" && contentEl) {
+    sessionsScrollTop = contentEl.scrollTop || 0;
+  }
+  activeDashboardTab = name;
+  const tabs = [[tabSessionsEl, "sessions"], [tabNoticesEl, "notices"]];
+  for (const [el, tabName] of tabs) {
+    if (!el) continue;
+    const selected = tabName === name;
+    el.setAttribute("aria-selected", selected ? "true" : "false");
+    el.setAttribute("tabindex", selected ? "0" : "-1");
+  }
+  if (contentEl) contentEl.hidden = name !== "sessions";
+  if (noticesPanelEl) noticesPanelEl.hidden = name !== "notices";
+  if (options.focus) {
+    const target = name === "sessions" ? tabSessionsEl : tabNoticesEl;
+    if (target && typeof target.focus === "function") target.focus();
+  }
+  if (previous === name) return;
+  if (name === "sessions") {
+    // A scroller hidden with display:none can come back at 0.
+    if (contentEl && sessionsScrollTop) contentEl.scrollTop = sessionsScrollTop;
+    return;
+  }
+  renderNotices();
+  if (notices.stale || !notices.data) void reloadNoticeHistory();
+}
+
+// Horizontal tablist: Left/Right move and activate, Home/End jump.
+function handleDashboardTabKeydown(event) {
+  const index = DASHBOARD_TABS.indexOf(activeDashboardTab);
+  let next = null;
+  if (event.key === "ArrowRight") next = DASHBOARD_TABS[(index + 1) % DASHBOARD_TABS.length];
+  else if (event.key === "ArrowLeft") {
+    next = DASHBOARD_TABS[(index - 1 + DASHBOARD_TABS.length) % DASHBOARD_TABS.length];
+  } else if (event.key === "Home") next = DASHBOARD_TABS[0];
+  else if (event.key === "End") next = DASHBOARD_TABS[DASHBOARD_TABS.length - 1];
+  if (!next) return;
+  event.preventDefault();
+  // Home/End count as scroll intent in the document-capture handler, but this
+  // press will not scroll anything: close the gesture it opened.
+  endScrollGesture();
+  selectDashboardTab(next, { focus: true });
+}
+
+function renderDashboardTabLabels() {
+  if (tabsEl) tabsEl.setAttribute("aria-label", t("dashboardTabsLabel"));
+  if (tabSessionsEl) tabSessionsEl.textContent = t("dashboardTabSessions");
+  if (tabNoticesEl) tabNoticesEl.textContent = t("dashboardTabNotices");
+}
+
+function normalizeNoticeHistory(result) {
+  if (!result || typeof result !== "object" || !Array.isArray(result.entries)) return null;
+  return {
+    enabled: result.enabled !== false,
+    retentionDays: Number.isInteger(result.retentionDays) && result.retentionDays > 0
+      ? result.retentionDays
+      : NOTICE_DEFAULT_RETENTION_DAYS,
+    entries: result.entries.filter((entry) => entry && typeof entry.id === "string"),
+  };
+}
+
+// Same single-flight shape as reloadSessionHistory: a change signal that
+// lands during a read queues exactly one more read.
+async function reloadNoticeHistory() {
+  if (!hasNoticeHistoryApi()) return;
+  if (notices.pending) {
+    notices.reloadRequested = true;
+    return;
+  }
+  notices.pending = true;
+  try {
+    do {
+      notices.reloadRequested = false;
+      notices.stale = false;
+      let result = null;
+      try { result = await window.dashboardAPI.getNoticeHistory(); } catch { result = null; }
+      const next = normalizeNoticeHistory(result);
+      if (next) notices.data = next;
+      else notices.stale = true;
+    } while (notices.reloadRequested);
+  } finally {
+    notices.pending = false;
+  }
+  if (notices.data) {
+    const ids = new Set(notices.data.entries.map((entry) => entry.id));
+    for (const id of notices.expanded) if (!ids.has(id)) notices.expanded.delete(id);
+  }
+  if (activeDashboardTab === "notices") renderNotices();
+}
+
+function handleNoticeHistoryChanged() {
+  notices.stale = true;
+  if (activeDashboardTab === "notices") void reloadNoticeHistory();
+}
+
+function setNoticesStatus(key) {
+  if (!noticesStatusEl) return;
+  if (notices.statusTimer !== null && typeof clearTimeout === "function") {
+    clearTimeout(notices.statusTimer);
+  }
+  notices.statusTimer = null;
+  noticesStatusEl.textContent = key ? t(key) : "";
+  if (key && typeof setTimeout === "function") {
+    notices.statusTimer = setTimeout(() => {
+      notices.statusTimer = null;
+      noticesStatusEl.textContent = "";
+    }, NOTICE_STATUS_MS);
+  }
+}
+
+// The panel is rebuilt wholesale, so a control that had focus is found again
+// by a stable data-notice-focus key afterwards. Only focus already inside the
+// panel is restored; a rebuild never pulls focus in from elsewhere.
+function noticesFocusKey() {
+  const active = document.activeElement;
+  if (!active || !noticesBodyEl || typeof noticesBodyEl.contains !== "function") return null;
+  if (!noticesBodyEl.contains(active)) return null;
+  return typeof active.getAttribute === "function" ? active.getAttribute("data-notice-focus") : null;
+}
+
+function restoreNoticesFocus(key) {
+  if (!key || !noticesBodyEl || typeof noticesBodyEl.querySelectorAll !== "function") return;
+  for (const el of noticesBodyEl.querySelectorAll("[data-notice-focus]")) {
+    if (el.getAttribute("data-notice-focus") !== key) continue;
+    if (!el.disabled && typeof el.focus === "function") el.focus({ preventScroll: true });
+    return;
+  }
+}
+
+// A live refresh must not wipe out text the user is selecting in a row; the
+// rebuild waits until the selection is gone (see selectionchange in init).
+function hasNoticesSelection() {
+  if (typeof window.getSelection !== "function" || !noticesBodyEl) return false;
+  const selection = window.getSelection();
+  if (!selection || selection.isCollapsed || !selection.rangeCount) return false;
+  const node = selection.anchorNode;
+  return !!node && typeof noticesBodyEl.contains === "function" && noticesBodyEl.contains(node);
+}
+
+function renderNotices(options = {}) {
+  if (!noticesBodyEl || !hasNoticeHistoryApi()) return;
+  if (!options.force && hasNoticesSelection()) {
+    notices.deferredRender = true;
+    return;
+  }
+  notices.deferredRender = false;
+  const focusKey = options.focusKey || noticesFocusKey();
+  const data = notices.data;
+  const entries = data ? data.entries : [];
+  const filtered = notices.filter === "all"
+    ? entries
+    : entries.filter((entry) => entry.level === notices.filter);
+  const fragment = document.createDocumentFragment();
+  fragment.appendChild(createNoticesToolbar(entries.length));
+  if (notices.confirmingClear) fragment.appendChild(createNoticesClearConfirm());
+  const retentionDays = data ? data.retentionDays : NOTICE_DEFAULT_RETENTION_DAYS;
+  fragment.appendChild(createText(
+    "p",
+    "notices-hint",
+    data && data.enabled === false
+      ? t("dashboardNoticesDisabled")
+      : t("dashboardNoticesRetention").replace("{days}", retentionDays)
+  ));
+  if (!data) {
+    // First read still in flight: an empty state here would flash "no
+    // notices" before the real list arrives.
+  } else if (!filtered.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty notices-empty";
+    if (entries.length) {
+      empty.appendChild(createText("div", "empty-title", t("dashboardNoticesEmptyFiltered")));
+    } else {
+      empty.appendChild(createText("div", "empty-title", t("dashboardNoticesEmpty")));
+      empty.appendChild(createText("div", "empty-hint", t("dashboardNoticesEmptyHint")));
+    }
+    fragment.appendChild(empty);
+  } else {
+    const list = document.createElement("ul");
+    list.className = "notices-list";
+    const now = Date.now();
+    for (const entry of filtered.slice(0, notices.limit)) {
+      list.appendChild(createNoticeRow(entry, now));
+    }
+    fragment.appendChild(list);
+    if (filtered.length > notices.limit) fragment.appendChild(createNoticesOlderButton());
+  }
+  noticesBodyEl.replaceChildren(fragment);
+  restoreNoticesFocus(focusKey);
+}
+
+function createNoticesToolbar(totalCount) {
+  const toolbar = document.createElement("div");
+  toolbar.className = "notices-toolbar";
+  const group = document.createElement("div");
+  group.className = "notices-filter";
+  group.setAttribute("role", "group");
+  group.setAttribute("aria-label", t("dashboardNoticesFilterLabel"));
+  for (const level of ["all", ...NOTICE_LEVELS]) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "notices-filter-button";
+    button.textContent = level === "all"
+      ? t("dashboardNoticesFilterAll")
+      : t(NOTICE_LEVEL_LABEL_KEYS[level]);
+    button.setAttribute("aria-pressed", notices.filter === level ? "true" : "false");
+    button.setAttribute("data-notice-focus", `filter:${level}`);
+    button.addEventListener("click", () => {
+      if (notices.filter === level) return;
+      notices.filter = level;
+      notices.limit = NOTICE_PAGE_SIZE;
+      renderNotices({ force: true });
+    });
+    group.appendChild(button);
+  }
+  toolbar.appendChild(group);
+  const clear = document.createElement("button");
+  clear.type = "button";
+  clear.className = "notices-clear-button";
+  clear.textContent = t("dashboardNoticesClear");
+  clear.setAttribute("data-notice-focus", "clear");
+  clear.disabled = totalCount === 0 || notices.clearing;
+  clear.addEventListener("click", () => {
+    notices.confirmingClear = true;
+    renderNotices({ force: true, focusKey: "clear-cancel" });
+  });
+  toolbar.appendChild(clear);
+  return toolbar;
+}
+
+// Clearing deletes files, so it takes a second, explicit step. Cancel gets
+// the initial focus, and Escape inside the box cancels.
+function createNoticesClearConfirm() {
+  const box = document.createElement("div");
+  box.className = "notices-confirm";
+  box.setAttribute("role", "group");
+  box.appendChild(createText("span", "notices-confirm-text", t("dashboardNoticesClearConfirm")));
+  const confirm = document.createElement("button");
+  confirm.type = "button";
+  confirm.className = "notices-confirm-delete";
+  confirm.textContent = t("dashboardNoticesClearConfirmAction");
+  confirm.setAttribute("data-notice-focus", "clear-confirm");
+  confirm.disabled = notices.clearing;
+  confirm.addEventListener("click", () => { void clearNoticeHistoryFromDashboard(); });
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.className = "notices-confirm-cancel";
+  cancel.textContent = t("dashboardNoticesClearCancel");
+  cancel.setAttribute("data-notice-focus", "clear-cancel");
+  cancel.disabled = notices.clearing;
+  const dismiss = () => {
+    notices.confirmingClear = false;
+    renderNotices({ force: true, focusKey: "clear" });
+  };
+  cancel.addEventListener("click", dismiss);
+  box.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || notices.clearing) return;
+    event.preventDefault();
+    dismiss();
+  });
+  box.appendChild(confirm);
+  box.appendChild(cancel);
+  return box;
+}
+
+async function clearNoticeHistoryFromDashboard() {
+  const api = window.dashboardAPI;
+  if (notices.clearing || !api || typeof api.clearNoticeHistory !== "function") return;
+  notices.clearing = true;
+  renderNotices({ force: true });
+  let result = null;
+  try { result = await api.clearNoticeHistory(); } catch { result = null; }
+  notices.clearing = false;
+  notices.confirmingClear = false;
+  notices.expanded.clear();
+  notices.limit = NOTICE_PAGE_SIZE;
+  if (result && result.status === "ok" && notices.data) {
+    notices.data = { ...notices.data, entries: [] };
+  }
+  renderNotices({ force: true, focusKey: `filter:${notices.filter}` });
+  setNoticesStatus(result && result.status === "ok"
+    ? "dashboardNoticesCleared"
+    : "dashboardNoticesClearFailed");
+  notices.stale = true;
+  void reloadNoticeHistory();
+}
+
+function createNoticeRow(entry, now) {
+  const level = NOTICE_LEVELS.includes(entry.level) ? entry.level : "info";
+  const row = document.createElement("li");
+  row.className = `notice-row level-${level}`;
+
+  const head = document.createElement("div");
+  head.className = "notice-row-head";
+  const badge = document.createElement("span");
+  badge.className = "notice-level";
+  const glyph = createText("span", "notice-level-glyph", NOTICE_LEVEL_GLYPHS[level]);
+  glyph.setAttribute("aria-hidden", "true");
+  badge.appendChild(glyph);
+  badge.appendChild(createText("span", "notice-level-label", t(NOTICE_LEVEL_LABEL_KEYS[level])));
+  head.appendChild(badge);
+  head.appendChild(createText("span", "notice-time", formatNoticeTime(entry.createdAt, now)));
+  // A card that kept changing says when it last did; one heartbeat apart is
+  // not worth the noise.
+  if (Number.isFinite(entry.updatedAt) && entry.updatedAt - entry.createdAt >= 60_000) {
+    head.appendChild(createText(
+      "span",
+      "notice-updated",
+      t("dashboardNoticesUpdated").replace("{time}", formatNoticeTime(entry.updatedAt, now))
+    ));
+  }
+  if (entry.live === true) head.appendChild(createText("span", "notice-live", t("dashboardNoticesLive")));
+  const copy = document.createElement("button");
+  copy.type = "button";
+  copy.className = "notices-row-action";
+  copy.textContent = t("dashboardNoticesCopy");
+  copy.title = t("dashboardNoticesCopyTitle");
+  const label = entry.title || entry.body || "";
+  copy.setAttribute("aria-label", label
+    ? `${t("dashboardNoticesCopy")}: ${label.slice(0, 80)}`
+    : t("dashboardNoticesCopy"));
+  copy.setAttribute("data-notice-focus", `copy:${entry.id}`);
+  copy.addEventListener("click", () => { void copyNoticeEntry(entry.id); });
+  head.appendChild(copy);
+  row.appendChild(head);
+
+  if (entry.title) row.appendChild(createText("div", "notice-title", entry.title));
+  if (entry.body) appendNoticeBody(row, entry);
+  if (Array.isArray(entry.series) && entry.series.length) row.appendChild(createNoticeSeries(entry.series));
+  if (entry.hasImage === true) {
+    row.appendChild(createText("div", "notice-image-note", t("dashboardNoticesImageOmitted")));
+  }
+  // Right-click copies the whole notice, the same gesture the bubble uses.
+  row.addEventListener("contextmenu", (event) => {
+    if (event && typeof event.preventDefault === "function") event.preventDefault();
+    void copyNoticeEntry(entry.id);
+  });
+  return row;
+}
+
+function appendNoticeBody(row, entry) {
+  const body = createText("div", "notice-body", entry.body);
+  const long = entry.body.length > NOTICE_BODY_CLAMP_CHARS
+    || entry.body.split("\n").length > NOTICE_BODY_CLAMP_LINES;
+  if (!long) {
+    row.appendChild(body);
+    return;
+  }
+  const expanded = notices.expanded.has(entry.id);
+  if (!expanded) body.classList.add("is-clamped");
+  row.appendChild(body);
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = "notice-toggle";
+  toggle.textContent = expanded ? t("dashboardNoticesShowLess") : t("dashboardNoticesShowMore");
+  toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+  toggle.setAttribute("data-notice-focus", `toggle:${entry.id}`);
+  toggle.addEventListener("click", () => {
+    if (notices.expanded.has(entry.id)) notices.expanded.delete(entry.id);
+    else notices.expanded.add(entry.id);
+    renderNotices({ force: true, focusKey: `toggle:${entry.id}` });
+  });
+  row.appendChild(toggle);
+}
+
+function createNoticeSeries(series) {
+  const list = document.createElement("ul");
+  list.className = "notice-series";
+  for (const item of series) {
+    if (!item || !item.name) continue;
+    const li = document.createElement("li");
+    li.appendChild(createText("span", "notice-series-name", item.name));
+    const value = Number.isFinite(item.value) ? `${item.value}${item.unit || ""}` : "—";
+    li.appendChild(createText("span", "notice-series-value", value));
+    list.appendChild(li);
+  }
+  return list;
+}
+
+// The page sends only the id; main reads the text from its store and owns the
+// clipboard, exactly like the bubble's right-click copy.
+async function copyNoticeEntry(id) {
+  const api = window.dashboardAPI;
+  if (!api || typeof api.copyNotice !== "function") return;
+  let result = null;
+  try { result = await api.copyNotice(id); } catch { result = null; }
+  setNoticesStatus(result && result.status === "ok"
+    ? "dashboardNoticesCopied"
+    : "dashboardNoticesCopyFailed");
+}
+
+let noticeTimeFormatterLang = null;
+let noticeTimeFormatter = null;
+let noticeDateTimeFormatter = null;
+
+// Today's rows show the time to the second (notices come in bursts); older
+// rows add the date.
+function formatNoticeTime(ms, now) {
+  if (!Number.isFinite(ms)) return "";
+  const lang = (i18nPayload && i18nPayload.lang) || "en";
+  if (noticeTimeFormatterLang !== lang || !noticeTimeFormatter) {
+    noticeTimeFormatterLang = lang;
+    try {
+      noticeTimeFormatter = new Intl.DateTimeFormat(lang, {
+        hour: "2-digit", minute: "2-digit", second: "2-digit",
+      });
+      noticeDateTimeFormatter = new Intl.DateTimeFormat(lang, {
+        month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
+      });
+    } catch {
+      noticeTimeFormatter = null;
+      noticeDateTimeFormatter = null;
+    }
+  }
+  const date = new Date(ms);
+  if (!noticeTimeFormatter) return date.toLocaleString();
+  const today = new Date(now);
+  const sameDay = date.getFullYear() === today.getFullYear()
+    && date.getMonth() === today.getMonth()
+    && date.getDate() === today.getDate();
+  return sameDay ? noticeTimeFormatter.format(date) : noticeDateTimeFormatter.format(date);
+}
+
+function createNoticesOlderButton() {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "notices-older-button";
+  button.textContent = t("dashboardNoticesShowOlder");
+  button.setAttribute("data-notice-focus", "older");
+  button.addEventListener("click", () => {
+    notices.limit += NOTICE_PAGE_SIZE;
+    renderNotices({ force: true, focusKey: "older" });
+  });
+  return button;
+}
+
+function initDashboardTabs() {
+  const api = window.dashboardAPI;
+  // An older main without notice history: the tab bar stays hidden and the
+  // page is exactly the Sessions view it always was.
+  if (!hasNoticeHistoryApi() || !tabsEl) return;
+  tabsEl.hidden = false;
+  if (tabSessionsEl && typeof tabSessionsEl.addEventListener === "function") {
+    tabSessionsEl.addEventListener("click", () => selectDashboardTab("sessions"));
+  }
+  if (tabNoticesEl && typeof tabNoticesEl.addEventListener === "function") {
+    tabNoticesEl.addEventListener("click", () => selectDashboardTab("notices"));
+  }
+  if (typeof tabsEl.addEventListener === "function") {
+    tabsEl.addEventListener("keydown", handleDashboardTabKeydown);
+  }
+  if (typeof api.onNoticeHistoryChanged === "function") {
+    api.onNoticeHistoryChanged(handleNoticeHistoryChanged);
+  }
+  if (typeof document.addEventListener === "function") {
+    document.addEventListener("selectionchange", () => {
+      if (notices.deferredRender && !hasNoticesSelection()) renderNotices();
+    });
+  }
+}
+
+
 async function init() {
+  initDashboardTabs();
   window.dashboardAPI.onLangChange((payload) => {
     i18nPayload = payload || i18nPayload;
     render();
     syncKimiQuotaRefreshControl();
+    renderDashboardTabLabels();
+    if (activeDashboardTab === "notices") renderNotices();
   });
   window.dashboardAPI.onSessionSnapshot((nextSnapshot) => {
     const hadKimiQuota = snapshotHasKimiQuota(snapshot);
@@ -2258,6 +2782,9 @@ async function init() {
   i18nPayload = nextI18n || i18nPayload;
   snapshot = nextSnapshot || snapshot;
   kimiQuotaStatus = nextKimiQuotaStatus || null;
+  renderDashboardTabLabels();
+  // Notices opened before the strings arrived rendered raw keys; repaint.
+  if (activeDashboardTab === "notices") renderNotices();
   render();
   void reloadSessionHistory();
 

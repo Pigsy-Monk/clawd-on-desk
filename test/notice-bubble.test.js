@@ -350,6 +350,90 @@ describe("notice bubble contract", () => {
   });
 });
 
+describe("cards held back for the notice sign", () => {
+  function lastShown(win) {
+    const shown = win.sent.filter((entry) => entry.channel === "notice-bubble-show");
+    return shown.length ? shown[shown.length - 1].payload.notices.map((n) => n.id) : null;
+  }
+
+  it("holds a new notice back while the sign shows it, and shows it on reveal", () => {
+    let hold = true;
+    const asked = [];
+    const ctx = createCtx({
+      shouldHoldNewNotices: (fresh) => { asked.push(fresh.map((n) => n.id)); return hold; },
+    });
+    const bubble = initNoticeBubble(ctx);
+    ctx.noticeStore.push(notice("n1"));
+    assert.deepEqual(asked, [["n1"]]);
+    assert.equal(bubble.getBubbleWindow(), null, "no card while the sign has it");
+    assert.equal(bubble.hasHeldNotices(), true);
+
+    assert.equal(bubble.revealHeldNotices(), 1);
+    const win = bubble.getBubbleWindow();
+    assert.deepEqual(lastShown(win), ["n1"]);
+    assert.equal(win.visible, true);
+    assert.equal(bubble.revealHeldNotices(), 0, "revealing twice is a no-op");
+
+    // A notice the sign does not take shows at once, next to the revealed one.
+    hold = false;
+    ctx.noticeStore.push(notice("n2"));
+    assert.deepEqual(lastShown(win), ["n1", "n2"]);
+    bubble.cleanup();
+  });
+
+  it("asks only about new notices, never about a keyed refresh or the baseline", () => {
+    const ctx = createCtx();
+    ctx.noticeStore.push(notice("old"));
+    const asked = [];
+    ctx.shouldHoldNewNotices = (fresh) => { asked.push(fresh.map((n) => n.id)); return true; };
+    const bubble = initNoticeBubble(ctx);
+    assert.deepEqual(lastShown(bubble.getBubbleWindow()), ["old"], "the baseline shows as before");
+
+    ctx.noticeStore.push(notice("n1"));
+    assert.deepEqual(asked, [["n1"]]);
+    assert.deepEqual(lastShown(bubble.getBubbleWindow()), ["old"], "n1 is held");
+    // A keyed re-push keeps its id: still held, not asked again.
+    ctx.noticeStore.remove("n1");
+    ctx.noticeStore.push(notice("n1", { title: "refreshed" }));
+    assert.equal(asked.length, 1 + 1, "the re-push after a removal is new again");
+    bubble.cleanup();
+  });
+
+  it("forgets a held card the store dropped and stays hidden if nothing is left", () => {
+    const ctx = createCtx({ shouldHoldNewNotices: () => true });
+    const bubble = initNoticeBubble(ctx);
+    ctx.noticeStore.push(notice("n1"));
+    ctx.noticeStore.remove("n1");
+    assert.equal(bubble.hasHeldNotices(), false);
+    assert.equal(bubble.revealHeldNotices(), 0);
+    assert.equal(bubble.getBubbleWindow(), null);
+    bubble.cleanup();
+  });
+
+  it("shows the card when the hold predicate throws", () => {
+    const ctx = createCtx({ shouldHoldNewNotices: () => { throw new Error("boom"); } });
+    const bubble = initNoticeBubble(ctx);
+    ctx.noticeStore.push(notice("n1"));
+    assert.deepEqual(lastShown(bubble.getBubbleWindow()), ["n1"]);
+    bubble.cleanup();
+  });
+
+  it("does not copy a held card's text", () => {
+    const ctx = createCtx({
+      shouldHoldNewNotices: (fresh) => fresh.some((n) => n.id === "n2"),
+      writeClipboard: () => {},
+    });
+    const bubble = initNoticeBubble(ctx);
+    ctx.noticeStore.push(notice("n1"));
+    ctx.noticeStore.push(notice("n2"));
+    const win = bubble.getBubbleWindow();
+    const event = { sender: win.webContents };
+    assert.equal(bubble.handleNoticeBubbleCopy(event, "n2"), false);
+    assert.equal(bubble.handleNoticeBubbleCopy(event, "n1"), true);
+    bubble.cleanup();
+  });
+});
+
 describe("renderer-driven dismissal and expand", () => {
   it("removes the notice the bubble's own renderer dismisses", () => {
     const ctx = createCtx();
