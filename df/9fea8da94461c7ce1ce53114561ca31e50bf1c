@@ -1,0 +1,134 @@
+themes/clawd/theme.json
+  s_fcfb4c3a34b5c9::t_f0843779b1bfbd 10-11,505-507,973-975,1312-1317,1366-1368
+assets/svg/clawd-notice-screen.svg
+  s_138ac6a86ccdd7::t_d98c31dd9d6920 1-3,5-13,17-26,30-32,34-40,43-49,52,57-66,84,92-93
+  s_fcfb4c3a34b5c9::t_04220299ce77ad 4,15-16,27-29,33,41-42,50-51,53-56,67-83,85-91
+  s_fcfb4c3a34b5c9::t_905d7a8d2ecc08 14
+src/renderer.js
+  s_fcfb4c3a34b5c9::t_57310c72386cb4 654-655,1166,1270,1272,1274,1280-1306,1313-1475,1481-1484,1486-1487,1489-1491,1493-1536,1552-1555,1557-1599,1601-1607,1609-1618,1620-1733,1736,1738,1740-1761,1764-1771,1775-1778,1781-1793,1795-1812,1814-1835,1908-1930,1962-1966,1973-1976,2225-2227,2233-2234,2245-2247,2249,2257,2270,2435
+  s_fcfb4c3a34b5c9::t_3525d0abbb664a 1476-1480,1485,1488,1492
+  s_fcfb4c3a34b5c9::t_be1441682dc3d9 1537-1551,1556,1600,1608,1619
+  s_fcfb4c3a34b5c9::t_10986073fe5264 1836-1907
+  s_fcfb4c3a34b5c9::t_6424a90375c8be 1734-1735,1737,1739,1762-1763,1772-1774,1779-1780,1794,1813
+test/fixtures/cigarette-accessory-electron.js
+  s_138ac6a86ccdd7::t_184cf58ec70cf5 123-127
+src/notice-text.js
+  s_138ac6a86ccdd7::t_2d6e6d3c52f8be 1-53
+test/pr811-accessory-decisions.test.js
+  s_138ac6a86ccdd7::t_184cf58ec70cf5 58-63,83-85,96-99,294-299
+src/notice-store.js
+  s_138ac6a86ccdd7::t_85819805a43606 8-10
+src/settings-tab-general.js
+  s_138ac6a86ccdd7::t_85819805a43606 16,519-523
+test/main-idle-mirror.test.js
+  s_fcfb4c3a34b5c9::t_b5209c1207f419 32-33,42-48,66,119-145
+assets/source/clawd-notice-screen/clawd-notice-screen.svg
+  s_fcfb4c3a34b5c9::t_187856cd40e136 4,15-16,27-29,33,41-42,50-51,53-56,67-83,85-91
+  s_fcfb4c3a34b5c9::t_905d7a8d2ecc08 14
+  s_138ac6a86ccdd7::t_6af3c4a196a3c0 1-3,5-13,17-26,30-32,34-40,43-49,52,57-66,84,92-93
+test/accessory-theme-capability.test.js
+  s_138ac6a86ccdd7::t_184cf58ec70cf5 74-77,84-88
+src/preload.js
+  s_fcfb4c3a34b5c9::t_e0cb003d9a9d92 45-63,65-100
+src/notice-history.js
+  s_138ac6a86ccdd7::t_85819805a43606 1-840
+src/settings-actions.js
+  s_138ac6a86ccdd7::t_85819805a43606 337
+src/settings-i18n.js
+  s_138ac6a86ccdd7::t_85819805a43606 800-801,2027-2028,3256-3257,4485-4486,5714-5715,6941-6942,8168-8169
+src/notice-screen-layout.js
+  s_fcfb4c3a34b5c9::t_7261f69f54c79a 57-60,104-105,110,256-276,298,300-302,332-333
+  s_fcfb4c3a34b5c9::t_f65c39ee8d187a 1-16,21-26,28-56,61-103,106-109,111-255,277-297,299,303-331,334-336
+  s_fcfb4c3a34b5c9::t_e6394a38aa2594 17-20,27
+test/notice-reaction.test.js
+  s_fcfb4c3a34b5c9::t_8e5ed71915d6a6 11,105,158-214,224-232,234-249
+  s_fcfb4c3a34b5c9::t_7396e2b13b289c 215-223
+test/notice-screen-layout.test.js
+  s_fcfb4c3a34b5c9::t_4bc9b88fcebfcc 1-245
+test/main-idle-visual-wiring.test.js
+  s_138ac6a86ccdd7::t_184cf58ec70cf5 114-152
+src/dashboard-renderer.js
+  s_138ac6a86ccdd7::t_85819805a43606 366-368,2230-2747,2749,2754-2755,2785-2787
+src/prefs.js
+  s_138ac6a86ccdd7::t_85819805a43606 321-325
+test/notice-screen-runtime.test.js
+  s_fcfb4c3a34b5c9::t_e3334b0842cb94 1-322
+src/dashboard.html
+  s_138ac6a86ccdd7::t_85819805a43606 885-1202,1205,1226-1233,1235-1244
+docs/project/theme-state-ui.md
+  s_fcfb4c3a34b5c9::t_56a2385a3ef7c0 336
+  s_138ac6a86ccdd7::t_184cf58ec70cf5 331-335,337-338
+test/notice-bubble.test.js
+  s_fcfb4c3a34b5c9::t_c29f4b377c3c5b 353-436
+test/renderer-low-power.test.js
+  s_fcfb4c3a34b5c9::t_728ee6f83f3b44 13,344,389,2728,3453-3624,3626-3666,3670-3762
+  s_fcfb4c3a34b5c9::t_f6331bde7bde4b 3625,3667-3669
+src/preload-dashboard.js
+  s_138ac6a86ccdd7::t_85819805a43606 10,43-47,86-89
+src/session-ipc.js
+  s_138ac6a86ccdd7::t_85819805a43606 44-49,140-168
+src/dashboard.js
+  s_138ac6a86ccdd7::t_85819805a43606 716-722,862
+test/prefs.test.js
+  s_138ac6a86ccdd7::t_85819805a43606 378-384
+test/hit-renderer.test.js
+  s_138ac6a86ccdd7::t_1e6820d40aeb72 524-525
+  s_138ac6a86ccdd7::t_184cf58ec70cf5 61,77,459-523
+src/notice-reaction.js
+  s_fcfb4c3a34b5c9::t_881d3f0cada4bd 3-4,12-31,55-60,62-63,72-73,75-89,91-96,102
+test/dashboard-notices.test.js
+  s_138ac6a86ccdd7::t_85819805a43606 1-385
+test/notice-history.test.js
+  s_138ac6a86ccdd7::t_bcc635a19735dd 19
+  s_138ac6a86ccdd7::t_85819805a43606 1-18,20-476
+src/preload-hit.js
+  s_fcfb4c3a34b5c9::t_e0cb003d9a9d92 25-60
+test/settings-actions.test.js
+  s_138ac6a86ccdd7::t_85819805a43606 279-285
+src/hit-renderer.js
+  s_138ac6a86ccdd7::t_184cf58ec70cf5 26-29,38-41,63-65,68-94,152-164,168-177,262-264,266,409-410,413
+  s_fcfb4c3a34b5c9::t_f5d18b9191e02d 218-227
+src/notice-screen-runtime.js
+  s_fcfb4c3a34b5c9::t_a11ed10ce1ca2f 239
+  s_fcfb4c3a34b5c9::t_f6f248b8420367 1-238,240-275
+src/main.js
+  s_fcfb4c3a34b5c9::t_a11ed10ce1ca2f 158,161,206,1561-1580,1583,1709-1746,1801,2317-2350,2353-2356,2568-2575,2738,3059-3063,5468-5470,5599-5603,5685-5689,5939-5941,5951,5959-5961,5974-5979,6306-6309,6469-6470
+src/i18n.js
+  s_138ac6a86ccdd7::t_85819805a43606 139-168,690-719,1234-1263,1777-1806,2319-2348,2861-2890,3403-3432
+test/session-ipc.test.js
+  s_138ac6a86ccdd7::t_85819805a43606 123-136,169,171,174,387-454
+test/settings-renderer-browser-env.test.js
+  s_138ac6a86ccdd7::t_85819805a43606 11250-11275
+src/index.html
+  s_138ac6a86ccdd7::t_184cf58ec70cf5 36
+src/notice-bubble.js
+  s_fcfb4c3a34b5c9::t_466e58e58cd0d3 9,47-48,136-137,139-148,582-592,594-600,608-617,633-635,641-645,658-659
+test/notice-screen-asset.test.js
+  s_fcfb4c3a34b5c9::t_a1eb423bfe2b5c 50-51,53,55-62
+  s_fcfb4c3a34b5c9::t_51945cbb7d853a 54
+  s_fcfb4c3a34b5c9::t_e3230d381d57b0 1-49,52,63-92
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.50-trip",
+  "base_commit_sha": "df9fea8da94461c7ce1ce53114561ca31e50bf1c",
+  "prompts": {},
+  "sessions": {
+    "s_138ac6a86ccdd7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "47868ab7-a9cb-4264-bc3b-40f38125fd3e",
+        "model": "claude-opus-5.5"
+      },
+      "human_author": "zwsong <zwsong@trip.com>"
+    },
+    "s_fcfb4c3a34b5c9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "91bf79ba-6310-4db7-a9c0-b11cfd6cb408",
+        "model": "unknown"
+      },
+      "human_author": "zwsong <zwsong@trip.com>"
+    }
+  }
+}
