@@ -75,6 +75,7 @@ function createHarness({ isMac = false, sendState = {} } = {}) {
         dropPaths: (paths) => apiCalls.push(["dropPaths", paths]),
         onDropAccepted: (cb) => { apiHandlers.dropAccepted = cb; },
         noticeScreenPointer: (input) => apiCalls.push(["noticeScreenPointer", input]),
+        noticeScreenClick: (input) => { apiCalls.push(["noticeScreenClick", input]); return Promise.resolve(false); },
       },
       addEventListener: () => {},
     },
@@ -100,8 +101,8 @@ function createHarness({ isMac = false, sendState = {} } = {}) {
     apiHandlers.stateSync({ currentState: "idle", miniMode: false, dndEnabled: false });
   }
 
-  function pointerup({ button = 0, ctrlKey = false, metaKey = false, clientX = 100 } = {}) {
-    fakeDocument._dispatch("pointerup", { button, ctrlKey, metaKey, clientX });
+  function pointerup({ button = 0, ctrlKey = false, metaKey = false, clientX = 100, clientY = 100 } = {}) {
+    fakeDocument._dispatch("pointerup", { button, ctrlKey, metaKey, clientX, clientY });
   }
 
   function pointerdown({ button = 0, pointerId = 1, clientX = 100, clientY = 100 } = {}) {
@@ -463,13 +464,15 @@ describe("hit-renderer notice head screen", () => {
     return JSON.parse(JSON.stringify(h.apiCalls.filter((c) => c[0] === "noticeScreenPointer").map((c) => c[1])));
   }
 
-  it("keeps double-click reactions from replacing the pose while it is up", () => {
+  it("keeps double-click reactions from replacing the pose while it is up", async () => {
     const h = createHarness();
     h.apiHandlers.stateSync({ noticeScreenActive: true });
     h.pointerup({});
     h.pointerup({});
     h.pointerup({});
     h.pointerup({});
+    // Main answers "not on the board"; the clicks then count as clicks.
+    await new Promise((resolve) => setImmediate(resolve));
     h.fireTimer((t) => t.ms === 400);
     const names = h.apiCalls.map((c) => c[0]);
     assert.ok(!names.includes("playClickReaction"), "click reactions are gated during the pose");
@@ -497,7 +500,7 @@ describe("hit-renderer notice head screen", () => {
     assert.deepStrictEqual(noticeCalls(h), [{ type: "move", clientX: 12, clientY: 14 }]);
   });
 
-  it("forwards wheel and window-leave, and a cancel stops forwarding", () => {
+  it("forwards wheel and window-leave, and stops only when main closes the gate", () => {
     const h = createHarness();
     h.apiHandlers.stateSync({ noticeScreenActive: true });
     h.context.document._dispatch("wheel", { clientX: 5, clientY: 6, deltaY: -100, deltaMode: 0 });
@@ -508,9 +511,24 @@ describe("hit-renderer notice head screen", () => {
       { type: "leave" },
     ]);
 
+    // A state change cancels click reactions, but the sign may outlive it
+    // (main defers ordinary state visuals): the gate stays main's to close.
     h.apiHandlers.cancelReaction();
     h.context.document._dispatch("wheel", { clientX: 5, clientY: 6, deltaY: -100, deltaMode: 0 });
-    assert.strictEqual(noticeCalls(h).length, 2);
+    assert.strictEqual(noticeCalls(h).length, 3, "still forwarding after a cancel");
+
+    h.apiHandlers.stateSync({ noticeScreenActive: false });
+    h.context.document._dispatch("wheel", { clientX: 5, clientY: 6, deltaY: -100, deltaMode: 0 });
+    assert.strictEqual(noticeCalls(h).length, 3, "main closed the gate");
+  });
+
+  it("still sends a click on the board to main after a state change cancelled reactions", () => {
+    const h = createHarness();
+    h.apiHandlers.stateSync({ noticeScreenActive: true });
+    h.apiHandlers.cancelReaction();
+    h.pointerup({ clientX: 40, clientY: 50 });
+    const clicks = JSON.parse(JSON.stringify(h.apiCalls.filter((c) => c[0] === "noticeScreenClick").map((c) => c[1])));
+    assert.deepStrictEqual(clicks, [{ clientX: 40, clientY: 50 }]);
   });
 
   it("sends the right-click point so main can tell the screen from the pet", () => {

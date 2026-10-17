@@ -60,9 +60,10 @@ window.hitAPI.onCancelReaction(() => {
   isReacting = false;
   isDragReacting = false;
   dragReactionDirection = null;
-  // A real state change also ends the head-screen pose in the render window.
-  noticeScreenActive = false;
-  clearQueuedNoticePointer();
+  // noticeScreenActive is main's alone (hit-state-sync): a state change no
+  // longer necessarily ends the notice sign (main defers ordinary state
+  // visuals while it is up), and main only re-sends the bit when it flips, so
+  // clearing it here would leave the board drawn but deaf to hover and clicks.
 });
 
 // --- Notice head screen input (hover zoom, wheel zoom) ---
