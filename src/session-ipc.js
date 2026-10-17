@@ -41,6 +41,12 @@ function registerSessionIpc(options = {}) {
     "resumeSessionFromHistory"
   );
   const quickMode = options.quickMode || null;
+  // Optional: the notice history (notice-history.js) and the copy formatter
+  // shared with the notice bubble. Without them the Notices tab has no
+  // channels to reach, the same way an unsupported quick mode has none.
+  const noticeHistory = options.noticeHistory || null;
+  const noticeCopyText = typeof options.noticeCopyText === "function" ? options.noticeCopyText : null;
+  const writeClipboard = typeof options.writeClipboard === "function" ? options.writeClipboard : null;
   const disposers = [];
 
   function handle(channel, listener) {
@@ -130,6 +136,36 @@ function registerSessionIpc(options = {}) {
       historyKey: payload.historyKey,
     });
   });
+
+  // Notice history holds the text agents pushed, so all three channels are
+  // restricted to the trusted Dashboard frame. Copy and clear take nothing the
+  // page could widen: copy sends an id and main reads the text from the store
+  // (main owns the clipboard), clear takes no payload at all.
+  if (noticeHistory) {
+    handle("dashboard:get-notice-history", (event) => {
+      const rejected = rejectUntrustedDashboardEvent(event);
+      return rejected || noticeHistory.getSnapshot();
+    });
+    handle("dashboard:clear-notice-history", (event) => {
+      const rejected = rejectUntrustedDashboardEvent(event);
+      return rejected || noticeHistory.clear();
+    });
+    handle("dashboard:copy-notice", (event, id) => {
+      const rejected = rejectUntrustedDashboardEvent(event);
+      if (rejected) return rejected;
+      if (typeof id !== "string" || !id || id.length > 128) return { status: "invalid" };
+      const entry = noticeHistory.get(id);
+      if (!entry) return { status: "not-found" };
+      const text = noticeCopyText ? noticeCopyText(entry) : "";
+      if (!text || !writeClipboard) return { status: "empty" };
+      try {
+        writeClipboard(text);
+      } catch (err) {
+        return { status: "error", message: err && err.message };
+      }
+      return { status: "ok" };
+    });
+  }
 
   handle("dashboard:set-session-alias", (_event, payload) => setSessionAlias(payload));
   handle("dashboard:set-session-automation", (event, payload) => {

@@ -5,7 +5,9 @@
 // Deliberately memory-only: a notice is a transient "the agent wants to say
 // something right now" card, not history. Nothing here is persisted, and the
 // store is bounded twice over (count cap + per-notice TTL) so a misbehaving
-// pusher cannot grow the main process without limit.
+// pusher cannot grow the main process without limit. The opt-out local
+// record of what cards said lives in notice-history.js, which only observes
+// this store's snapshots.
 //
 // The store is the single validator. `/notice` parses JSON and hands the raw
 // object here; anything malformed is normalized or dropped at this boundary so

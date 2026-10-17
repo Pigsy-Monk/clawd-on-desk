@@ -276,6 +276,13 @@ describe("updateRegistry pure-data validators", () => {
     assert.strictEqual(updateRegistry.noticeBubbleStyle(1).status, "error");
   });
 
+  it("accepts only a boolean for the notice history switch", () => {
+    assert.strictEqual(updateRegistry.noticeHistoryEnabled(true).status, "ok");
+    assert.strictEqual(updateRegistry.noticeHistoryEnabled(false).status, "ok");
+    assert.strictEqual(updateRegistry.noticeHistoryEnabled("false").status, "error");
+    assert.strictEqual(updateRegistry.noticeHistoryEnabled(0).status, "error");
+  });
+
   it("accepts only supported bubble placement enums", () => {
     for (const value of ["auto", "left", "right"]) {
       assert.strictEqual(updateRegistry.bubbleFollowPreference(value).status, "ok");

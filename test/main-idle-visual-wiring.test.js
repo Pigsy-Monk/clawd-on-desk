@@ -111,3 +111,42 @@ describe("main default idle visual wiring", () => {
     assert.ok(mainSource.includes("getActiveTheme: () => themeRuntime.getActiveTheme(),"));
   });
 });
+
+describe("renderer theme-config command-line budget", () => {
+  const mainSource = fs.readFileSync(MAIN_JS, "utf8");
+
+  it("sends each accessory attachment map once, inside the slots", () => {
+    const rendererConfig = sectionBetween(
+      mainSource,
+      "function buildRendererThemeConfig(",
+      "function deliverRendererThemeConfig("
+    );
+    const slotsAt = rendererConfig.indexOf("cfg.accessorySlots = {");
+    assert.ok(slotsAt !== -1);
+    assert.ok(rendererConfig.indexOf("delete cfg.accessoryAttachments;") > slotsAt);
+    assert.ok(rendererConfig.indexOf("delete cfg.mouthAccessoryAttachments;") > slotsAt);
+  });
+
+  // The config rides on the render window's command line (--theme-config);
+  // Windows rejects a process command line over 32767 characters, and
+  // Chromium's own switches take ~3-5k of that. Keep every built-in theme's
+  // payload well inside, so a few more sprites cannot silently stop the pet
+  // window from loading.
+  it("keeps every built-in theme's payload inside the budget", () => {
+    const themeLoader = require("../src/theme-loader");
+    const os = require("node:os");
+    themeLoader.init(path.join(__dirname, "..", "src"), os.tmpdir());
+    for (const themeId of ["clawd", "calico", "cloudling"]) {
+      const theme = themeLoader.loadTheme(themeId, { strict: true });
+      const cfg = themeLoader.createThemeContext(theme).getRendererConfig();
+      cfg.accessorySlots = {
+        head: { attachments: cfg.accessoryAttachments },
+        mouth: { attachments: cfg.mouthAccessoryAttachments },
+      };
+      delete cfg.accessoryAttachments;
+      delete cfg.mouthAccessoryAttachments;
+      const length = `--theme-config=${JSON.stringify(cfg)}`.length;
+      assert.ok(length < 22000, `${themeId} renderer config is ${length} characters`);
+    }
+  });
+});

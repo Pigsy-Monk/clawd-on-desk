@@ -22,7 +22,42 @@ contextBridge.exposeInMainWorld("hitAPI", {
   dragLock: (locked) => ipcRenderer.send("drag-lock", locked),
   dragMove: () => ipcRenderer.send("drag-move"),
   dragEnd: () => ipcRenderer.send("drag-end"),
-  showContextMenu: () => ipcRenderer.send("show-context-menu"),
+  // The client point lets main decide whether a right-click landed on the
+  // notice head screen (copy) or anywhere else (the normal menu).
+  showContextMenu: (point) => {
+    const safe = point && Number.isFinite(point.clientX) && Number.isFinite(point.clientY)
+      ? { clientX: point.clientX, clientY: point.clientY }
+      : null;
+    ipcRenderer.send("show-context-menu", safe);
+  },
+  // Notice head screen: hover / leave / wheel while the pose is up. Main
+  // converts the client point to viewBox units and forwards it.
+  noticeScreenPointer: (input) => {
+    if (!input || typeof input !== "object") return;
+    const type = input.type;
+    if (type !== "move" && type !== "leave" && type !== "wheel") return;
+    const safe = { type };
+    if (type !== "leave") {
+      if (!Number.isFinite(input.clientX) || !Number.isFinite(input.clientY)) return;
+      safe.clientX = input.clientX;
+      safe.clientY = input.clientY;
+    }
+    if (type === "wheel") {
+      safe.deltaY = Number.isFinite(input.deltaY) ? input.deltaY : 0;
+      safe.deltaMode = input.deltaMode === 1 || input.deltaMode === 2 ? input.deltaMode : 0;
+    }
+    ipcRenderer.send("notice-screen-hit-pointer", safe);
+  },
+  // Notice sign: a left-click while the sign is up. Resolves true when it
+  // landed on the board (main opens the notice's card), false otherwise (the
+  // caller treats it as an ordinary click on the pet).
+  noticeScreenClick: (input) => {
+    if (!input || !Number.isFinite(input.clientX) || !Number.isFinite(input.clientY)) {
+      return Promise.resolve(false);
+    }
+    return ipcRenderer.invoke("notice-screen-hit-click", { clientX: input.clientX, clientY: input.clientY })
+      .then((handled) => handled === true, () => false);
+  },
   focusTerminal: () => ipcRenderer.send("focus-terminal"),
   // OS file drop (#459). File → absolute path must resolve here in the
   // preload: Electron ≥32 removed File.path from the renderer, and

@@ -277,6 +277,23 @@ body[data-tail="right"] { --gutter-right: 20px; }
   overflow-wrap: anywhere;
 }
 
+/* The picture an image notice carries: a thumbnail under the words. The
+   whole card opens it large (the same window a trend card opens), so the
+   thumbnail only has to say what it is, not be readable. */
+.thumb {
+  display: block;
+  /* Hug the picture: the copy column would otherwise stretch the frame. */
+  align-self: flex-start;
+  max-width: 100%;
+  max-height: 120px;
+  object-fit: contain;
+  margin-top: 6px;
+  background: #fff;
+  border: 2px solid #000;
+  border-radius: 3px;
+}
+.card[data-expandable="true"] { cursor: zoom-in; }
+
 /* One row per trend series: name, sparkline, current reading. */
 .series {
   display: flex;
@@ -809,8 +826,41 @@ function buildCopy(notice, level) {
     if (!firstLine) firstLine = bodyEl;
   }
 
-  if (firstLine) firstLine.insertBefore(buildLevelGlyph(level), firstLine.firstChild);
+  // A text card's picture. A trend card's image is its full chart and stays in
+  // the expanded window; its sparklines already say what it shows.
+  const thumb = series.length ? "" : imageDataOf(notice);
+  if (thumb) {
+    const img = document.createElement("img");
+    img.className = "thumb";
+    img.alt = "";
+    img.draggable = false;
+    // The decoded size changes the card's height; main must hear it.
+    img.addEventListener("load", reportHeight);
+    img.addEventListener("error", () => { img.remove(); reportHeight(); });
+    // The one notice-derived value given to an attribute: bytes the store
+    // already verified are a PNG under its cap, re-checked as base64 here.
+    img.src = "data:image/png;base64," + thumb;
+    copy.appendChild(img);
+    if (!firstLine) firstLine = img;
+  }
+
+  if (firstLine && firstLine.tagName !== "IMG") firstLine.insertBefore(buildLevelGlyph(level), firstLine.firstChild);
   return copy;
+}
+
+// The base64 PNG an image notice carries, or "". Anything that is not plain
+// base64 is refused rather than handed to the loader.
+const BASE64_RE = /^[A-Za-z0-9+/]+={0,2}$/;
+function imageDataOf(notice) {
+  const image = notice && notice.image && typeof notice.image === "object" ? notice.image : null;
+  if (!image || image.mime !== "image/png" || typeof image.data !== "string") return "";
+  return BASE64_RE.test(image.data) ? image.data : "";
+}
+
+// A card opens the large window when it has something to show there: a trend
+// card's chart, or an image notice's picture.
+function isExpandable(notice) {
+  return !!(notice && (notice.kind === "trend" || imageDataOf(notice)));
 }
 
 // A ✓ that pops in the card's top-right corner for a moment after a copy. A
@@ -837,6 +887,7 @@ function buildCard(notice) {
   card.className = "card";
   card.dataset.level = level;
   card.dataset.kind = notice && notice.kind === "trend" ? "trend" : "text";
+  card.dataset.expandable = isExpandable(notice) ? "true" : "false";
 
   const bar = document.createElement("div");
   bar.className = "level-bar";
@@ -853,13 +904,13 @@ function buildCard(notice) {
     if (id) window.noticeBubbleAPI.dismiss(id);
   });
 
-  // A trend card's body belongs to the expanded chart, so only its × dismisses.
-  // The kind is read back off the element rather than captured here, so an
-  // in-place update that turns a text card into a chart card changes what a
-  // click does by rewriting that one attribute.
+  // A card with a chart or a picture opens it large, so only its × dismisses.
+  // The flag is read back off the element rather than captured here, so an
+  // in-place update that adds or drops the picture changes what a click does
+  // by rewriting that one attribute.
   card.addEventListener("click", () => {
     if (!id) return;
-    if (card.dataset.kind === "trend") window.noticeBubbleAPI.expand(id);
+    if (card.dataset.expandable === "true") window.noticeBubbleAPI.expand(id);
     else window.noticeBubbleAPI.dismiss(id);
   });
 
@@ -882,9 +933,14 @@ function buildCard(notice) {
 
 // What a card actually paints, as one comparable string. The notices are frozen
 // and rebuilt on every snapshot, so identity never survives a diff and cannot be
-// used to tell "unchanged" from "re-pushed". The image is left out on purpose:
-// the bubble card does not draw it (the chart window does), and comparing a 6 MB
-// base64 string on every snapshot would cost far more than it is worth.
+// used to tell "unchanged" from "re-pushed". The image enters only as a short
+// fingerprint (length and both ends): comparing a 6 MB base64 string on every
+// snapshot would cost far more than it is worth, and a re-pushed picture still
+// redraws the thumbnail.
+function imageFingerprint(notice) {
+  const data = imageDataOf(notice);
+  return data ? `${data.length}:${data.slice(0, 48)}:${data.slice(-48)}` : "";
+}
 function contentSignature(notice) {
   if (!notice) return "";
   return JSON.stringify([
@@ -893,6 +949,7 @@ function contentSignature(notice) {
     levelOf(notice),
     notice.kind || "",
     Array.isArray(notice.series) ? notice.series : [],
+    imageFingerprint(notice),
   ]);
 }
 
@@ -906,6 +963,7 @@ function updateCard(element, notice) {
   const level = levelOf(notice);
   element.dataset.level = level;
   element.dataset.kind = notice && notice.kind === "trend" ? "trend" : "text";
+  element.dataset.expandable = isExpandable(notice) ? "true" : "false";
   const copy = element.querySelector(".copy");
   if (copy) copy.replaceWith(buildCopy(notice, level));
 }

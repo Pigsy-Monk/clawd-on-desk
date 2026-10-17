@@ -713,6 +713,13 @@ module.exports = function initDashboard(ctx) {
     sendSnapshot(snapshot);
   }
 
+  // The page re-reads notice history itself (through the trusted invoke) and
+  // only while its Notices tab is showing, so this carries no data.
+  function notifyNoticeHistoryChanged() {
+    if (!dashboardWindow || dashboardWindow.isDestroyed()) return;
+    sendToPage("dashboard:notice-history-changed");
+  }
+
   // textScale changed while the dashboard is open: re-zoom, raise the minimum
   // size, and only grow the window if it now sits below that minimum — never
   // touch a user-chosen size otherwise.
@@ -852,6 +859,7 @@ module.exports = function initDashboard(ctx) {
       quickMode.broadcastSessionSnapshot(snapshot);
     },
     sendI18n,
+    notifyNoticeHistoryChanged,
     getWindow: () => dashboardWindow,
     getWebContents,
     // The window that currently owns the page — the modal parent and the

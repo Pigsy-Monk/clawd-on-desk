@@ -8,6 +8,7 @@ const path = require("node:path");
 const {
   NOTICE_REACTION_LEVELS,
   normalizeNoticeReactionLevel,
+  buildNoticeReactionPayload,
   canPlayNoticeReaction,
   createNoticeReactionHandler,
 } = require("../src/notice-reaction");
@@ -101,7 +102,7 @@ describe("notice reaction main-process gate", () => {
     assert.strictEqual(handle("warn"), true);
     assert.strictEqual(handle("error", { headless: true }), false);
     assert.strictEqual(handle("unexpected"), false);
-    assert.deepStrictEqual(calls, [["play-notice-reaction", "warn"]]);
+    assert.deepStrictEqual(calls, [["play-notice-reaction", { level: "warn", id: null, title: "" }]]);
   });
 
   it("blocks each gate independently at the handler level", () => {
@@ -154,7 +155,98 @@ describe("notice reaction main-process gate", () => {
   });
 });
 
+describe("notice reaction payload", () => {
+  it("carries level, id and headline from a store notice, nothing else", () => {
+    const payload = buildNoticeReactionPayload({
+      id: "notice-7",
+      level: "error",
+      title: "  Build failed\nsecond line ",
+      body: "secret body",
+      series: [{ name: "cpu", points: [1, 2] }],
+      image: { mime: "image/png", data: "AAAA" },
+    });
+    assert.deepStrictEqual({ ...payload }, { level: "error", id: "notice-7", title: "Build failed" });
+    assert.ok(Object.isFrozen(payload));
+  });
+
+  it("falls back to the first body line for a body-only notice", () => {
+    const payload = buildNoticeReactionPayload({ id: "n1", level: "info", title: "", body: "\n  deploy done  \nmore" });
+    assert.strictEqual(payload.title, "deploy done");
+  });
+
+  it("accepts a bare level and rejects anything without a valid level", () => {
+    assert.deepStrictEqual({ ...buildNoticeReactionPayload("success") }, { level: "success", id: null, title: "" });
+    assert.strictEqual(buildNoticeReactionPayload("debug"), null);
+    assert.strictEqual(buildNoticeReactionPayload({ id: "n", level: "fatal", title: "x" }), null);
+    assert.strictEqual(buildNoticeReactionPayload(null), null);
+  });
+
+  function openHandler(extra = {}) {
+    const calls = [];
+    const handle = createNoticeReactionHandler({
+      getEnabled: () => true,
+      hasPetWindow: () => true,
+      sendToRenderer: (...args) => calls.push(args),
+      ...extra,
+    });
+    return { calls, handle };
+  }
+
+  it("lets a head-screen theme take the notice, and only after the gate", () => {
+    const screens = [];
+    const notice = { id: "n9", level: "warn", title: "Disk almost full", body: "92%" };
+    const { calls, handle } = openHandler({
+      playNoticeScreen: (payload, original) => {
+        screens.push([{ ...payload }, original]);
+        return true;
+      },
+    });
+    assert.strictEqual(handle(notice), true);
+    assert.deepStrictEqual(screens, [[{ level: "warn", id: "n9", title: "Disk almost full" }, notice]]);
+    assert.deepStrictEqual(calls, [], "the per-level reaction must not also play");
+
+    const gated = openHandler({
+      getEnabled: () => false,
+      playNoticeScreen: () => { throw new Error("must not be reached"); },
+    });
+    assert.strictEqual(gated.handle(notice), false);
+  });
+
+  it("answers the same gate up front through canPlay, without playing anything", () => {
+    const open = openHandler({ playNoticeScreen: () => { throw new Error("must not be reached"); } });
+    assert.strictEqual(open.handle.canPlay(), true);
+    assert.deepStrictEqual(open.calls, []);
+    for (const extra of [{ getEnabled: () => false }, { getDoNotDisturb: () => true }, { getMiniMode: () => true }]) {
+      assert.strictEqual(openHandler(extra).handle.canPlay(), false, Object.keys(extra)[0]);
+    }
+  });
+
+  it("falls back to the per-level reaction when the head screen declines or throws", () => {
+    for (const playNoticeScreen of [() => false, () => { throw new Error("boom"); }, () => "yes"]) {
+      const { calls, handle } = openHandler({ playNoticeScreen });
+      assert.strictEqual(handle({ id: "n2", level: "success", title: "ok" }), true);
+      assert.deepStrictEqual(calls, [["play-notice-reaction", { level: "success", id: "n2", title: "ok" }]]);
+    }
+  });
+});
+
 describe("notice reaction theme bindings", () => {
+  it("binds the notice sign on clawd only; other themes keep the per-level reaction", () => {
+    const clawd = JSON.parse(fs.readFileSync(path.join(ROOT, "themes", "clawd", "theme.json"), "utf8"));
+    const file = clawd.reactions["notice-screen"] && clawd.reactions["notice-screen"].file;
+    assert.strictEqual(file, "clawd-notice-screen.svg");
+    assert.ok(fs.existsSync(path.join(THEME_ASSET_DIRS.clawd, file)));
+    // The text line is written into the SVG document, so the file must be on
+    // the document-backed channel; its hit box must cover the zoomed board in
+    // either hand (test/notice-screen-layout.test.js checks the envelope).
+    assert.ok(clawd.rendering.objectChannelFiles.includes(file));
+    assert.deepStrictEqual(clawd.fileHitBoxes[file], { x: -9.75, y: -15.8, w: 34.5, h: 32.8 });
+    for (const themeId of ["calico", "cloudling"]) {
+      const theme = JSON.parse(fs.readFileSync(path.join(ROOT, "themes", themeId, "theme.json"), "utf8"));
+      assert.strictEqual(theme.reactions["notice-screen"], undefined, themeId);
+    }
+  });
+
   it("covers every level with a real asset in every built-in theme", () => {
     for (const [themeId, assetDir] of Object.entries(THEME_ASSET_DIRS)) {
       const theme = JSON.parse(fs.readFileSync(path.join(ROOT, "themes", themeId, "theme.json"), "utf8"));

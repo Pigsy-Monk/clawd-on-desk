@@ -328,6 +328,17 @@ Mini 状态映射：
 - `pass` 在 `#pet-particle-layer` 播放一次像素纸屑，`fail` 只对 `#pet-facing-stage` 使用独立 `translate` / `rotate` 抖动，不覆盖 mini 镜像、漫步位移或跨屏 viewport offset
 - DND、隐藏桌宠、mini / mini transition、拖拽和 headless 会话都会压住测试结果动画；状态机本身仍照常处理测试事件
 
+### Notice Reactions
+
+- `POST /notice` 进 `src/notice-store.js` 后，main 每个 snapshot 只对最新一条反应一次；gate 在 `src/notice-reaction.js`（`noticeReactionsEnabled`、DND、隐藏、mini / mini transition、拖拽、headless、无窗口），渲染侧只收 `{ level, id, title }`（title 是单行 headline，不含 body / series / image）
+- 主题声明 `reactions["notice-screen"]`（目前只有 Clawd 的 `clawd-notice-screen.svg`，文件名沿用旧称）时走“举小黑板”姿势：宠物用杆子举一块小黑板，提示符按 level 着色、标题用粉笔字（打包的 ZCOOL KuaiLe）写在黑板上；每 4.5 秒把牌子从头顶抛到另一只手（`#notice-sign-car` 整体平移 `LEFT_HAND_DX`）。main 用 `requestDisplayedVisual(..., { source: "reaction" })` 走 visual-generation 合同，使 `fileHitBoxes` 覆盖身体 + 两只手各自放大后的黑板包络；其他主题保持按 level 的 `react-annoyed` / `heart-eyes` / `notification` / `idle-look`
+- 黑板素材在 `rendering.objectChannelFiles` 里，renderer 用 DOM API 往 SVG 文档写 prompt 和标题；字体经 `fetch` + 该文档自己的 `FontFace` 载入，失败回落系统字体。长标题三遍跑马灯，停留时长按三遍计算并钳到 [3 s, 15 s]（放得下的固定 4 s）；几何、计时与抛牌轨迹都在 `src/notice-screen-layout.js`
+- **卡片默认先不弹**（与用户确认的“只举牌”做法）：新通知到达时若这块牌子会显示它（`handleNoticeReaction.canPlay()` 且主题有该 reaction），`src/notice-bubble.js` 把新卡片记入 held 集合不渲染；左键点黑板（`notice-screen-hit-click` invoke → `noticeScreenRuntime.handleHitClick`）才 `revealHeldNotices()`。姿势以 `reason` 结束：`dwell`（放完）和 `replaced`（被更新的通知接手）保持 held，未点开的通知只能去仪表盘通知历史里看；其他结束（状态切换、拖拽、DND、mini、其他视觉提交、换主题）视为被打断，立即弹出卡片。牌子没接住这条通知（其他主题、gate 关闭、投递失败）时 main 的 reaction 订阅也会立即 reveal，卡片不会丢
+- 举牌期间普通状态视觉（`source` 非 `reaction`、非 `notification`、非 DND / mini）在 main 的 `requestDisplayedVisual` 被推迟：姿势结束时 renderer 的 `resume-from-reaction` 会取回当前状态，所以会话回合结束等普通状态切换不再把牌子顶掉；权限请求（`notification`）、拖拽 / 点击反应、DND、mini 照常立即打断；姿势超过 120 秒不再推迟（防 renderer 卡死）
+- 反应期间 main 停止光标轮询，所以悬停 / 滚轮 / 点击 / 右键由 hit window 上报、`src/notice-screen-runtime.js` 换算到 viewBox 后处理；悬停时黑板放大 1.5×（滚轮 1× 到窗口放得下为止，正方形窗口约 1.72×）、停留倒计时和换手暂停，跑马灯不停并在悬停期间循环（三遍已滚完则从头开始）；抛在空中时忽略悬停。右键落在黑板上时 main 用 `noticeCopyText`（`src/notice-text.js`，与通知卡片共用）写剪贴板，其他位置仍是普通右键菜单。姿势期间 hit window 的点击 / 双击反应被门控，点在黑板外仍是单击揭示 HUD；`prefers-reduced-motion` 下无跑马灯、无缩放过渡、不换手
+- `notice-store` 订阅不回放当前内容，main 的 reaction 订阅与 bubble 都以启动时的 `list()` 为基线，因此启动后推送的第一条通知也会反应（此前第一条被当成基线吞掉）
+- 渲染窗口的 theme config 走 `--theme-config` 命令行参数；Windows 整条进程命令行上限 32767 字符，所以 `buildRendererThemeConfig` 只在 `accessorySlots` 里各带一份 head / mouth attachment map，不再在顶层重复
+
 ## Electron And Platform Notes
 
 - `win.setFocusable(false)`：渲染窗口永不抢焦点

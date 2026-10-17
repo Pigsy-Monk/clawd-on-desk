@@ -155,6 +155,18 @@ describe("notice stack height estimate", () => {
     assert.equal(threeSeries - oneSeries, 60, "one row per extra series");
   });
 
+  it("makes room for an image notice's thumbnail, but not for a trend card's chart", () => {
+    const image = { mime: "image/png", data: "iVBORw0KGgo=" };
+    const text = estimateNoticeStackHeight([notice("n1")]);
+    assert.equal(estimateNoticeStackHeight([notice("n1", { image })]) - text, 130);
+    const trend = notice("n1", { kind: "trend", series: [{ name: "cpu", points: [1], value: 1, unit: "" }] });
+    assert.equal(
+      estimateNoticeStackHeight([{ ...trend, image }]),
+      estimateNoticeStackHeight([trend]),
+      "a trend card's image lives in the expanded window"
+    );
+  });
+
   it("survives a trend notice with no series list at all", () => {
     assert.equal(estimateNoticeStackHeight([notice("n1", { kind: "trend" })]), 150);
     assert.equal(estimateNoticeStackHeight([notice("n1", { kind: "trend", series: null })]), 150);
@@ -346,6 +358,90 @@ describe("notice bubble contract", () => {
 
     assert.equal(bubble.suspendForPetHidden(), true);
     assert.equal(win.visible, false);
+    bubble.cleanup();
+  });
+});
+
+describe("cards held back for the notice sign", () => {
+  function lastShown(win) {
+    const shown = win.sent.filter((entry) => entry.channel === "notice-bubble-show");
+    return shown.length ? shown[shown.length - 1].payload.notices.map((n) => n.id) : null;
+  }
+
+  it("holds a new notice back while the sign shows it, and shows it on reveal", () => {
+    let hold = true;
+    const asked = [];
+    const ctx = createCtx({
+      shouldHoldNewNotices: (fresh) => { asked.push(fresh.map((n) => n.id)); return hold; },
+    });
+    const bubble = initNoticeBubble(ctx);
+    ctx.noticeStore.push(notice("n1"));
+    assert.deepEqual(asked, [["n1"]]);
+    assert.equal(bubble.getBubbleWindow(), null, "no card while the sign has it");
+    assert.equal(bubble.hasHeldNotices(), true);
+
+    assert.equal(bubble.revealHeldNotices(), 1);
+    const win = bubble.getBubbleWindow();
+    assert.deepEqual(lastShown(win), ["n1"]);
+    assert.equal(win.visible, true);
+    assert.equal(bubble.revealHeldNotices(), 0, "revealing twice is a no-op");
+
+    // A notice the sign does not take shows at once, next to the revealed one.
+    hold = false;
+    ctx.noticeStore.push(notice("n2"));
+    assert.deepEqual(lastShown(win), ["n1", "n2"]);
+    bubble.cleanup();
+  });
+
+  it("asks only about new notices, never about a keyed refresh or the baseline", () => {
+    const ctx = createCtx();
+    ctx.noticeStore.push(notice("old"));
+    const asked = [];
+    ctx.shouldHoldNewNotices = (fresh) => { asked.push(fresh.map((n) => n.id)); return true; };
+    const bubble = initNoticeBubble(ctx);
+    assert.deepEqual(lastShown(bubble.getBubbleWindow()), ["old"], "the baseline shows as before");
+
+    ctx.noticeStore.push(notice("n1"));
+    assert.deepEqual(asked, [["n1"]]);
+    assert.deepEqual(lastShown(bubble.getBubbleWindow()), ["old"], "n1 is held");
+    // A keyed re-push keeps its id: still held, not asked again.
+    ctx.noticeStore.remove("n1");
+    ctx.noticeStore.push(notice("n1", { title: "refreshed" }));
+    assert.equal(asked.length, 1 + 1, "the re-push after a removal is new again");
+    bubble.cleanup();
+  });
+
+  it("forgets a held card the store dropped and stays hidden if nothing is left", () => {
+    const ctx = createCtx({ shouldHoldNewNotices: () => true });
+    const bubble = initNoticeBubble(ctx);
+    ctx.noticeStore.push(notice("n1"));
+    ctx.noticeStore.remove("n1");
+    assert.equal(bubble.hasHeldNotices(), false);
+    assert.equal(bubble.revealHeldNotices(), 0);
+    assert.equal(bubble.getBubbleWindow(), null);
+    bubble.cleanup();
+  });
+
+  it("shows the card when the hold predicate throws", () => {
+    const ctx = createCtx({ shouldHoldNewNotices: () => { throw new Error("boom"); } });
+    const bubble = initNoticeBubble(ctx);
+    ctx.noticeStore.push(notice("n1"));
+    assert.deepEqual(lastShown(bubble.getBubbleWindow()), ["n1"]);
+    bubble.cleanup();
+  });
+
+  it("does not copy a held card's text", () => {
+    const ctx = createCtx({
+      shouldHoldNewNotices: (fresh) => fresh.some((n) => n.id === "n2"),
+      writeClipboard: () => {},
+    });
+    const bubble = initNoticeBubble(ctx);
+    ctx.noticeStore.push(notice("n1"));
+    ctx.noticeStore.push(notice("n2"));
+    const win = bubble.getBubbleWindow();
+    const event = { sender: win.webContents };
+    assert.equal(bubble.handleNoticeBubbleCopy(event, "n2"), false);
+    assert.equal(bubble.handleNoticeBubbleCopy(event, "n1"), true);
     bubble.cleanup();
   });
 });
@@ -556,6 +652,26 @@ describe("notice-bubble.html", () => {
     assert.doesNotMatch(source, /outerHTML/);
     assert.doesNotMatch(source, /insertAdjacentHTML/);
     assert.doesNotMatch(source, /document\.write/);
+  });
+
+  it("shows an image notice's picture as a thumbnail that opens it large", () => {
+    const source = textOf(findAll(document, (node) => node.name === "script")[0]);
+    const css = textOf(findAll(document, (node) => node.name === "style")[0]);
+    // Only a verified PNG, as base64, reaches the loader; no other notice value
+    // is ever set as an attribute.
+    assert.match(source, /image\.mime !== "image\/png"/);
+    assert.match(source, /const BASE64_RE = \/\^\[A-Za-z0-9\+\/\]\+=\{0,2\}\$\/;/);
+    assert.match(source, /img\.src = "data:image\/png;base64," \+ thumb;/);
+    // A trend card keeps its sparklines; its image stays in the expanded window.
+    assert.match(source, /const thumb = series\.length \? "" : imageDataOf\(notice\);/);
+    // A card with a picture expands on click like a chart card; the × dismisses.
+    assert.match(source, /if \(card\.dataset\.expandable === "true"\) window\.noticeBubbleAPI\.expand\(id\);/);
+    assert.match(source, /notice\.kind === "trend" \|\| imageDataOf\(notice\)/);
+    // The thumbnail's decoded size is reported, and a re-pushed picture redraws.
+    assert.match(source, /img\.addEventListener\("load", reportHeight\);/);
+    assert.match(source, /imageFingerprint\(notice\),\n  \]\);/);
+    assert.match(css, /\.thumb \{[^}]*max-height: 120px;/);
+    assert.match(css, /\.card\[data-expandable="true"\] \{ cursor: zoom-in; \}/);
   });
 
   it("routes dismiss and expand through the preload bridge", () => {

@@ -42,9 +42,62 @@ contextBridge.exposeInMainWorld("electronAPI", {
   onPlayTestReaction: (cb) => ipcRenderer.on("play-test-reaction", (_, result) => {
     if (result === "pass" || result === "fail") cb(result);
   }),
-  onPlayNoticeReaction: (cb) => ipcRenderer.on("play-notice-reaction", (_, level) => {
-    if (level === "info" || level === "success" || level === "warn" || level === "error") cb(level);
+  // A notice reaction is either a bare level (older main) or
+  // { level, id, title, visualRequest? }. Only those fields cross the bridge,
+  // each type-checked; the level stays whitelisted either way.
+  onPlayNoticeReaction: (cb) => ipcRenderer.on("play-notice-reaction", (_, payload) => {
+    const isLevel = (value) => value === "info" || value === "success" || value === "warn" || value === "error";
+    if (isLevel(payload)) {
+      cb({ level: payload, id: null, title: "" });
+      return;
+    }
+    if (!payload || typeof payload !== "object" || !isLevel(payload.level)) return;
+    const safe = {
+      level: payload.level,
+      id: typeof payload.id === "string" && payload.id.length <= 64 ? payload.id : null,
+      title: typeof payload.title === "string" ? payload.title.slice(0, 200) : "",
+    };
+    if (payload.visualRequest && typeof payload.visualRequest === "object") {
+      safe.visualRequest = payload.visualRequest;
+    }
+    cb(safe);
   }),
+  // Notice head screen: pointer input forwarded by main (already in viewBox
+  // units), the copy confirmation, and the screen's status back to main.
+  onNoticeScreenPointer: (cb) => ipcRenderer.on("notice-screen-pointer", (_, input) => {
+    if (!input || typeof input !== "object") return;
+    if (input.type === "leave") {
+      cb({ type: "leave" });
+      return;
+    }
+    if ((input.type !== "move" && input.type !== "wheel")
+        || !Number.isFinite(input.x) || !Number.isFinite(input.y)) return;
+    const safe = { type: input.type, x: input.x, y: input.y };
+    if (input.type === "wheel") {
+      safe.deltaY = Number.isFinite(input.deltaY) ? input.deltaY : 0;
+      safe.deltaMode = input.deltaMode === 1 || input.deltaMode === 2 ? input.deltaMode : 0;
+    }
+    cb(safe);
+  }),
+  onNoticeScreenCopied: (cb) => ipcRenderer.on("notice-screen-copied", (_, info) => {
+    cb({ id: info && typeof info.id === "string" ? info.id : null });
+  }),
+  reportNoticeScreenStatus: (status) => {
+    if (!status || typeof status !== "object") return;
+    const rect = status.rect && typeof status.rect === "object"
+      && [status.rect.x, status.rect.y, status.rect.w, status.rect.h].every(Number.isFinite)
+      ? { x: status.rect.x, y: status.rect.y, w: status.rect.w, h: status.rect.h }
+      : null;
+    // Why an ended pose ended: main keeps the notice's card held back after
+    // "dwell" / "replaced" and shows it after anything else.
+    const reason = status.reason === "dwell" || status.reason === "replaced" ? status.reason : "cancel";
+    ipcRenderer.send("notice-screen-status", {
+      active: status.active === true,
+      id: typeof status.id === "string" ? status.id : null,
+      rect,
+      ...(status.active === true ? {} : { reason }),
+    });
+  },
   // Sound playback (from main)
   onPreloadSounds: (cb) => ipcRenderer.on("preload-sounds", (_, payload) => cb(payload)),
   onPlaySound: (cb) => ipcRenderer.on("play-sound", (_, payload) => cb(payload)),

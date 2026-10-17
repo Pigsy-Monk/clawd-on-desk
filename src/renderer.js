@@ -651,6 +651,8 @@ initWithConfig(tc);
 window.electronAPI.onThemeConfig((newConfig) => {
   // Clean up layered tracking before reinitializing
   _cleanupLayeredTracking();
+  // The theme switch re-applies the current state itself; only drop the pose.
+  endNoticeScreenPose();
   cancelPendingSwap("theme-config");
   clearAllAccessoryRuntimes({ clearAsset: true });
   initWithConfig(newConfig);
@@ -1161,6 +1163,7 @@ if (window && typeof window.addEventListener === "function") {
   window.addEventListener("beforeunload", () => {
     clearAllAccessoryRuntimes({ clearAsset: true });
     clearTestReactionVisuals();
+    endNoticeScreenPose();
   });
 }
 
@@ -1264,21 +1267,665 @@ function resolveNoticeReaction(reactionName) {
   return { file, duration };
 }
 
-function playNoticeReaction(level) {
-  if (dndEnabled) return;
+function playLevelNoticeReaction(level) {
   const reactionName = NOTICE_REACTION_ANIMATIONS[level];
-  if (!reactionName) return;
+  if (!reactionName) return false;
   const reaction = resolveNoticeReaction(reactionName);
-  if (!reaction) return;
+  if (!reaction) return false;
   // Same one-shot overlay the click reactions use: it holds the pet for
   // `duration`, then main hands the real state back over resume-from-reaction
   // (see playReaction / endReaction below). A reaction already in flight is
   // replaced, not stacked, so a burst cannot leave the pet mid-swap.
   playReaction(reaction.file, reaction.duration);
+  return true;
+}
+
+// `notice` is { level, id, title, visualRequest? } (preload normalizes a bare
+// level from an older main into that shape). A visualRequest means main
+// routed the notice through the displayed-visual contract for the theme's
+// head screen; anything else plays the per-level reaction as before.
+function playNoticeReaction(notice) {
+  const payload = notice && typeof notice === "object" ? notice : { level: notice };
+  const visualRequest = normalizeVisualRequest(payload.visualRequest);
+  if (dndEnabled) {
+    notifyVisualSettlement(visualRequest, "failed", {
+      actualFile: currentDisplayedSvg || null,
+      channel: clawdEl && clawdEl.tagName === "OBJECT" ? "object" : "img",
+      verified: false,
+    });
+    return;
+  }
+  if (visualRequest && playNoticeScreen(payload, visualRequest)) return;
+  // The request main issued is not going to be displayed; settle it now
+  // instead of leaving main to time it out.
+  notifyVisualSettlement(visualRequest, "failed", {
+    actualFile: currentDisplayedSvg || null,
+    channel: clawdEl && clawdEl.tagName === "OBJECT" ? "object" : "img",
+    verified: false,
+  });
+  playLevelNoticeReaction(payload.level);
 }
 
 if (window.electronAPI && typeof window.electronAPI.onPlayNoticeReaction === "function") {
   window.electronAPI.onPlayNoticeReaction(playNoticeReaction);
+}
+
+// ── Notice sign (clawd "notice-screen" reaction) ──
+// Clawd holds a small chalkboard up on a stick and the notice's title runs
+// across it in chalk: the level prompt in the level colour, then the title.
+// A long line scrolls (three passes) and the pose lasts as long as those take
+// (clamped). Every few seconds Clawd tosses the sign over its head into the
+// other hand. Hovering the board zooms it and pauses the dwell and the
+// tosses while the line keeps scrolling so it can be read; the wheel adjusts
+// the zoom. A left-click on the board opens the notice's card (main holds the
+// card back while the sign is up); a right-click copies the notice (main
+// writes the clipboard and tells us to flash a confirmation). All
+// geometry/timing math is in notice-screen-layout.js; this section only
+// drives the SVG document.
+const noticeLayout = globalThis.noticeScreenLayout || null;
+const SVG_NS = "http://www.w3.org/2000/svg";
+const NOTICE_SCREEN_REACTION = "notice-screen";
+const NOTICE_SCREEN_ATTACH_RETRY_MS = 16;
+const NOTICE_SCREEN_ATTACH_MAX_ATTEMPTS = 60;
+// Bundled with the app. The nested SVG document does not inherit the host
+// page's fonts, so the font is loaded into that document's own FontFaceSet.
+const NOTICE_SCREEN_FONTS = Object.freeze([
+  Object.freeze({ family: "Clawd Notice Chalk", file: "fonts/zcool-kuaile.woff2" }),
+]);
+const NOTICE_CHALK_FONT_STACK = "'Clawd Notice Chalk', 'Microsoft YaHei', 'PingFang SC', sans-serif";
+const NOTICE_TITLE_COLOR = "#F2F2E6";
+const NOTICE_FONT_WAIT_MS = 400;
+// After the pointer leaves the board the next toss waits at least this long.
+const NOTICE_TOSS_AFTER_HOVER_MS = 1500;
+let noticeScreenPose = null;
+let noticeFontBuffersPromise = null;
+
+function prefersReducedMotion() {
+  try {
+    return !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  } catch {
+    return false;
+  }
+}
+
+function resolveNoticeScreenFile() {
+  const entry = tc && tc.reactions && tc.reactions[NOTICE_SCREEN_REACTION];
+  if (!entry || typeof entry !== "object") return null;
+  const file = Array.isArray(entry.files) ? entry.files[0] : entry.file;
+  return typeof file === "string" && file ? file : null;
+}
+
+function playNoticeScreen(payload, visualRequest) {
+  if (!noticeLayout) return false;
+  const file = resolveNoticeScreenFile();
+  if (!file || file !== visualRequest.file) return false;
+  const pose = {
+    id: typeof payload.id === "string" ? payload.id : null,
+    level: noticeLayout.resolveLevel(payload.level),
+    title: typeof payload.title === "string" ? payload.title : "",
+    file,
+    reducedMotion: prefersReducedMotion(),
+    // Un-paused time since the pose started: drives the dwell. Hovering
+    // pauses it; the marquee keeps its own clock so a zoomed-in line still
+    // scrolls far enough to be read.
+    accumulatedMs: 0,
+    runningSince: Date.now(),
+    dwellMs: noticeLayout.DWELL_FIT_MS,
+    dwellTimer: null,
+    plan: noticeLayout.buildMarqueePlan(0),
+    offset: 0,
+    marqueeStartedAt: Date.now(),
+    // Once hovered, the passes keep coming until the pose ends.
+    marqueeLoop: false,
+    marqueeRaf: null,
+    doc: null,
+    zoomEl: null,
+    lineGroup: null,
+    lineEl: null,
+    promptEl: null,
+    titleEl: null,
+    feedbackEl: null,
+    // Which hand holds the sign, and the parts a toss moves or swaps.
+    side: "right",
+    carrierEl: null,
+    armsEls: null,
+    handEls: null,
+    tossStart: null,
+    tossRaf: null,
+    tossTimer: null,
+    nextTossAt: Date.now() + noticeLayout.TOSS_HOLD_MS,
+    feedbackTimer: null,
+    attachTimer: null,
+    visibleRect: null,
+    hovering: false,
+    leaveTimer: null,
+    wheelScale: noticeLayout.HOVER_ZOOM_SCALE,
+    wheelCarry: 0,
+    zoomTarget: noticeLayout.computeZoomRect(noticeLayout.SCREEN_RECT, 1, null),
+    zoomCurrent: noticeLayout.computeZoomRect(noticeLayout.SCREEN_RECT, 1, null),
+    zoomRaf: null,
+    readyEl: null,
+    ended: false,
+  };
+  // A newer notice takes over the sign: the old pose ends as "replaced", so
+  // main keeps its card held for the board this one is about to show.
+  endNoticeScreenPose("replaced");
+  playReaction(visualRequest, null, {
+    onReady: (el) => {
+      // A reused document can report ready synchronously, before the pose is
+      // installed below; park the element until then.
+      if (noticeScreenPose === pose) attachNoticeScreen(pose, el, 0);
+      else if (!pose.ended) pose.readyEl = el;
+    },
+  });
+  // playReaction() ended any earlier pose; this one starts now.
+  noticeScreenPose = pose;
+  if (pose.readyEl) {
+    const el = pose.readyEl;
+    pose.readyEl = null;
+    attachNoticeScreen(pose, el, 0);
+  }
+  // The pose holds even if its document never becomes scriptable (image
+  // fallback): a fixed dwell runs from the start, replaced once the line has
+  // been measured.
+  scheduleNoticeScreenDwell(pose);
+  reportNoticeScreenStatus(pose);
+  return true;
+}
+
+function getNoticeScreenElapsedMs(pose) {
+  return pose.accumulatedMs + (pose.runningSince === null ? 0 : Date.now() - pose.runningSince);
+}
+
+function pauseNoticeScreenDwell(pose) {
+  if (pose.runningSince === null) return;
+  pose.accumulatedMs += Date.now() - pose.runningSince;
+  pose.runningSince = null;
+  if (pose.dwellTimer) { clearTimeout(pose.dwellTimer); pose.dwellTimer = null; }
+}
+
+function resumeNoticeScreenDwell(pose) {
+  if (pose.runningSince !== null || pose.ended) return;
+  pose.runningSince = Date.now();
+  scheduleNoticeScreenDwell(pose);
+}
+
+function getNoticeMarqueeElapsedMs(pose) {
+  return Date.now() - pose.marqueeStartedAt;
+}
+
+function isNoticeMarqueeDone(pose) {
+  return !pose.marqueeLoop && getNoticeMarqueeElapsedMs(pose) >= pose.plan.totalMs;
+}
+
+function scheduleNoticeScreenDwell(pose) {
+  if (pose.dwellTimer) { clearTimeout(pose.dwellTimer); pose.dwellTimer = null; }
+  if (pose.ended || pose.runningSince === null) return;
+  const remaining = Math.max(0, pose.dwellMs - getNoticeScreenElapsedMs(pose));
+  pose.dwellTimer = setTimeout(() => {
+    pose.dwellTimer = null;
+    if (noticeScreenPose !== pose) return;
+    endNoticeScreenPose("dwell");
+    endReaction();
+  }, remaining);
+}
+
+// Ends the pose's own bookkeeping (timers, frames, main's view of it). The
+// caller decides what the pet shows next: the dwell timer hands back through
+// endReaction(); a cancel (state change, drag, new reaction) already has its
+// next visual on the way. `reason` tells main what to do with the card it is
+// holding back for the sign: "dwell" (the sign was shown in full) and
+// "replaced" (a newer notice took the sign over) keep it held; anything else
+// means the sign was cut short, so main shows the card after all.
+function endNoticeScreenPose(reason = "cancel") {
+  const pose = noticeScreenPose;
+  if (!pose) return;
+  noticeScreenPose = null;
+  pose.ended = true;
+  for (const key of ["dwellTimer", "leaveTimer", "feedbackTimer", "attachTimer", "tossTimer"]) {
+    if (pose[key]) { clearTimeout(pose[key]); pose[key] = null; }
+  }
+  for (const key of ["marqueeRaf", "zoomRaf", "tossRaf"]) {
+    if (pose[key] !== null) { cancelAnimationFrame(pose[key]); pose[key] = null; }
+  }
+  if (window.electronAPI && typeof window.electronAPI.reportNoticeScreenStatus === "function") {
+    window.electronAPI.reportNoticeScreenStatus({ active: false, id: pose.id, rect: null, reason });
+  }
+}
+
+// For gates that close mid-pose (DND, mini mode): end the pose
+// and hand the pet back the same way the dwell does, so it can never be left
+// holding the screen sprite with no timer to release it.
+function abortNoticeScreenPose() {
+  if (!noticeScreenPose) return;
+  endNoticeScreenPose();
+  endReaction();
+}
+
+function reportNoticeScreenStatus(pose) {
+  if (!pose || pose.ended || noticeScreenPose !== pose) return;
+  if (!window.electronAPI || typeof window.electronAPI.reportNoticeScreenStatus !== "function") return;
+  const target = pose.zoomTarget;
+  window.electronAPI.reportNoticeScreenStatus({
+    active: true,
+    id: pose.id,
+    rect: { x: target.x, y: target.y, w: target.w, h: target.h },
+  });
+}
+
+// contentDocument can be briefly null right after load (see attachEyeTracking).
+function attachNoticeScreen(pose, el, attempt) {
+  pose.attachTimer = null;
+  if (pose.ended || noticeScreenPose !== pose) return;
+  let doc = null;
+  try {
+    doc = el && el.tagName === "OBJECT" ? el.contentDocument : null;
+  } catch {
+    doc = null;
+  }
+  const lineGroup = doc && doc.getElementById ? doc.getElementById("notice-line") : null;
+  const zoomEl = doc && doc.getElementById ? doc.getElementById("notice-screen-zoom") : null;
+  if (!lineGroup || !zoomEl) {
+    // An <img> fallback never becomes scriptable: keep the static pose.
+    if (!el || el.tagName !== "OBJECT" || attempt >= NOTICE_SCREEN_ATTACH_MAX_ATTEMPTS) return;
+    pose.attachTimer = setTimeout(() => attachNoticeScreen(pose, el, attempt + 1), NOTICE_SCREEN_ATTACH_RETRY_MS);
+    return;
+  }
+  pose.doc = doc;
+  pose.zoomEl = zoomEl;
+  pose.lineGroup = lineGroup;
+  // Optional parts: without them the sign simply stays in the right hand.
+  pose.carrierEl = doc.getElementById("notice-sign-car");
+  const parts = (left, right) => {
+    const l = doc.getElementById(left);
+    const r = doc.getElementById(right);
+    return l && r ? { left: l, right: r } : null;
+  };
+  pose.armsEls = parts("notice-arms-left", "notice-arms-right");
+  pose.handEls = parts("notice-hand-left", "notice-hand-right");
+  const chalk = doc.getElementById("notice-chalk");
+  if (chalk) chalk.setAttribute("fill", pose.level.color);
+  // A reused document may still show the last pose's hand and zoom.
+  pose.side = "right";
+  zoomEl.setAttribute("transform", "");
+  applyNoticeSignPlacement(pose, 0, 0, "right", true);
+  pose.visibleRect = measureNoticeScreenVisibleRect(el, pose.file);
+  buildNoticeScreenLine(pose);
+  layoutNoticeScreenLine(pose);
+  startNoticeScreenMarquee(pose);
+  scheduleNoticeSignToss(pose);
+  loadNoticeScreenFonts(el, doc).then(() => {
+    if (pose.ended || noticeScreenPose !== pose) return;
+    // Real glyph widths replace the fallback-font measurement.
+    layoutNoticeScreenLine(pose);
+    startNoticeScreenMarquee(pose);
+  });
+}
+
+// The viewBox region the render window actually shows (the media element is
+// laid out larger than the window), so the zoomed screen can be kept inside.
+function measureNoticeScreenVisibleRect(el, file) {
+  try {
+    const rect = el.getBoundingClientRect();
+    const vb = (_fileViewBoxes && _fileViewBoxes[file]) || _viewBox;
+    return noticeLayout.computeVisibleViewBoxRect(
+      { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+      { width: window.innerWidth, height: window.innerHeight },
+      vb
+    );
+  } catch {
+    return null;
+  }
+}
+
+function createNoticeSvgElement(doc, tag, attrs) {
+  const node = doc.createElementNS(SVG_NS, tag);
+  for (const [name, value] of Object.entries(attrs)) node.setAttribute(name, String(value));
+  return node;
+}
+
+// The line is built with DOM APIs only; the title is agent-supplied text and
+// only ever lands in textContent.
+function buildNoticeScreenLine(pose) {
+  const doc = pose.doc;
+  const group = pose.lineGroup;
+  while (group.firstChild) group.removeChild(group.firstChild);
+  const baseline = noticeLayout.LINE_BASELINE_Y;
+  const line = createNoticeSvgElement(doc, "g", { id: "notice-line-content" });
+  const prompt = createNoticeSvgElement(doc, "text", {
+    x: noticeLayout.LINE_START_X,
+    y: baseline,
+    fill: pose.level.color,
+    "font-size": noticeLayout.PROMPT_FONT_SIZE,
+    "font-family": NOTICE_CHALK_FONT_STACK,
+  });
+  prompt.textContent = pose.level.prompt;
+  const title = createNoticeSvgElement(doc, "text", {
+    x: noticeLayout.LINE_START_X,
+    y: baseline,
+    fill: NOTICE_TITLE_COLOR,
+    "font-size": noticeLayout.TITLE_FONT_SIZE,
+    "font-family": NOTICE_CHALK_FONT_STACK,
+  });
+  title.textContent = pose.title;
+  line.appendChild(prompt);
+  line.appendChild(title);
+  group.appendChild(line);
+  const feedback = createNoticeSvgElement(doc, "text", {
+    x: noticeLayout.LINE_START_X,
+    y: baseline,
+    fill: noticeLayout.LEVELS.success.color,
+    "font-size": noticeLayout.TITLE_FONT_SIZE,
+    "font-family": NOTICE_CHALK_FONT_STACK,
+    visibility: "hidden",
+  });
+  feedback.textContent = noticeLayout.COPY_FEEDBACK_TEXT;
+  group.appendChild(feedback);
+  pose.lineEl = line;
+  pose.promptEl = prompt;
+  pose.titleEl = title;
+  pose.feedbackEl = feedback;
+}
+
+function measureNoticeText(node, text, fontSize) {
+  if (!text) return 0;
+  let width = 0;
+  try {
+    width = typeof node.getComputedTextLength === "function" ? node.getComputedTextLength() : 0;
+  } catch {
+    width = 0;
+  }
+  return Number.isFinite(width) && width > 0 ? width : noticeLayout.estimateTextWidth(text, fontSize);
+}
+
+// Measures the line, places title and cursor, and re-plans the marquee and
+// the dwell from it. Safe to repeat (fonts arriving late): the clock keeps
+// running, so the new plan simply continues from the same elapsed time.
+function layoutNoticeScreenLine(pose) {
+  if (!pose.lineEl) return;
+  const promptWidth = measureNoticeText(pose.promptEl, pose.level.prompt, noticeLayout.PROMPT_FONT_SIZE);
+  const titleWidth = measureNoticeText(pose.titleEl, pose.title, noticeLayout.TITLE_FONT_SIZE);
+  const line = noticeLayout.layoutLine(promptWidth, titleWidth);
+  pose.titleEl.setAttribute("x", String(line.titleX));
+  pose.plan = noticeLayout.buildMarqueePlan(line.overflow);
+  pose.dwellMs = noticeLayout.computeDwellMs(pose.plan);
+  applyNoticeScreenOffset(pose, true);
+  if (pose.runningSince !== null) scheduleNoticeScreenDwell(pose);
+}
+
+function applyNoticeScreenOffset(pose, force = false) {
+  if (!pose.lineEl) return;
+  const offset = noticeLayout.marqueeOffsetAt(pose.plan, getNoticeMarqueeElapsedMs(pose), {
+    reducedMotion: pose.reducedMotion,
+    loop: pose.marqueeLoop,
+  });
+  if (!force && Math.abs(offset - pose.offset) < 0.005) return;
+  pose.offset = offset;
+  pose.lineEl.setAttribute("transform", offset === 0 ? "" : `translate(${offset.toFixed(3)} 0)`);
+}
+
+function startNoticeScreenMarquee(pose) {
+  if (pose.marqueeRaf !== null || pose.ended) return;
+  if (pose.reducedMotion || !(pose.plan.overflow > 0)) return;
+  if (isNoticeMarqueeDone(pose)) return;
+  const tick = () => {
+    pose.marqueeRaf = null;
+    if (pose.ended) return;
+    applyNoticeScreenOffset(pose);
+    if (isNoticeMarqueeDone(pose)) {
+      applyNoticeScreenOffset(pose, true);
+      return;
+    }
+    pose.marqueeRaf = requestAnimationFrame(tick);
+  };
+  pose.marqueeRaf = requestAnimationFrame(tick);
+}
+
+// Fetch once per renderer, then hand each new SVG document its own FontFace
+// objects (FontFace belongs to a realm). Any failure falls back to the
+// system fonts already named in the font stacks.
+function getNoticeFontBuffers() {
+  if (noticeFontBuffersPromise) return noticeFontBuffersPromise;
+  noticeFontBuffersPromise = Promise.all(NOTICE_SCREEN_FONTS.map(async (font) => {
+    try {
+      if (typeof fetch !== "function") return null;
+      const response = await fetch(new URL(font.file, document.baseURI).href);
+      if (!response.ok) return null;
+      return await response.arrayBuffer();
+    } catch {
+      return null;
+    }
+  }));
+  return noticeFontBuffersPromise;
+}
+
+async function loadNoticeScreenFonts(el, doc) {
+  try {
+    const svgWin = el && el.contentWindow;
+    if (!svgWin || typeof svgWin.FontFace !== "function" || !doc.fonts) return;
+    const buffers = await getNoticeFontBuffers();
+    const loads = NOTICE_SCREEN_FONTS.map(async (font, index) => {
+      try {
+        const buffer = buffers[index];
+        // Source fallback: a URL source when fetch() could not read file:.
+        const source = buffer
+          ? buffer.slice(0)
+          : `url("${new URL(font.file, document.baseURI).href}")`;
+        const face = new svgWin.FontFace(font.family, source);
+        doc.fonts.add(face);
+        await face.load();
+      } catch {}
+    });
+    await Promise.race([
+      Promise.all(loads),
+      new Promise((resolve) => setTimeout(resolve, NOTICE_FONT_WAIT_MS)),
+    ]);
+  } catch {}
+}
+
+// Pointer input forwarded by main from the hit window, in viewBox units.
+function handleNoticeScreenPointer(input) {
+  const pose = noticeScreenPose;
+  if (!pose || pose.ended || !input) return;
+  if (input.type === "leave") {
+    leaveNoticeScreen(pose);
+    return;
+  }
+  // Mid-toss the board is in the air; hover picks up again once it lands.
+  if (pose.tossStart !== null) return;
+  const point = { x: input.x, y: input.y };
+  // Hover is tested against where the board is heading, so a board still
+  // growing toward the cursor never reads as a leave.
+  const over = noticeLayout.pointInRect(point, pose.hovering ? pose.zoomTarget : noticeLayout.signRect(pose.side));
+  if (input.type === "wheel") {
+    if (!over) return;
+    if (!pose.hovering) enterNoticeScreen(pose);
+    const step = noticeLayout.stepWheelZoom(pose.wheelScale, input.deltaY, {
+      deltaMode: input.deltaMode,
+      carry: pose.wheelCarry,
+      maxScale: noticeLayout.maxZoomScale(noticeLayout.SCREEN_RECT, pose.visibleRect),
+    });
+    pose.wheelCarry = step.carry;
+    pose.wheelScale = step.scale;
+    setNoticeScreenZoom(pose, step.scale);
+    return;
+  }
+  if (over) enterNoticeScreen(pose);
+  else leaveNoticeScreen(pose);
+}
+
+function enterNoticeScreen(pose) {
+  if (pose.leaveTimer) { clearTimeout(pose.leaveTimer); pose.leaveTimer = null; }
+  if (pose.hovering) return;
+  pose.hovering = true;
+  pauseNoticeScreenDwell(pose);
+  // The board stays in this hand while it is being read.
+  if (pose.tossTimer) { clearTimeout(pose.tossTimer); pose.tossTimer = null; }
+  // Hovering is for reading: the line keeps scrolling while zoomed. If its
+  // passes already ran out, start over from the beginning of the line.
+  if (isNoticeMarqueeDone(pose)) pose.marqueeStartedAt = Date.now();
+  pose.marqueeLoop = true;
+  startNoticeScreenMarquee(pose);
+  setNoticeScreenZoom(pose, pose.wheelScale);
+}
+
+// Leaving resumes the dwell at once (the marquee never stopped) and lets the
+// tosses start again after a pause; the zoom lingers a moment so a cursor
+// that slips off the edge doesn't make the board jump.
+function leaveNoticeScreen(pose) {
+  if (!pose.hovering) return;
+  pose.hovering = false;
+  resumeNoticeScreenDwell(pose);
+  pose.nextTossAt = Math.max(pose.nextTossAt, Date.now() + NOTICE_TOSS_AFTER_HOVER_MS);
+  scheduleNoticeSignToss(pose);
+  if (pose.leaveTimer) clearTimeout(pose.leaveTimer);
+  pose.leaveTimer = setTimeout(() => {
+    pose.leaveTimer = null;
+    if (pose.ended || pose.hovering) return;
+    pose.wheelScale = noticeLayout.HOVER_ZOOM_SCALE;
+    pose.wheelCarry = 0;
+    setNoticeScreenZoom(pose, 1);
+  }, noticeLayout.ZOOM_LEAVE_DELAY_MS);
+}
+
+function setNoticeScreenZoom(pose, scale) {
+  const cap = noticeLayout.maxZoomScale(noticeLayout.SCREEN_RECT, pose.visibleRect);
+  const target = noticeLayout.computeZoomRect(
+    noticeLayout.signRect(pose.side),
+    Math.min(cap, Math.max(1, scale)),
+    pose.visibleRect
+  );
+  const prev = pose.zoomTarget;
+  pose.zoomTarget = target;
+  if (prev.x !== target.x || prev.y !== target.y || prev.scale !== target.scale) {
+    reportNoticeScreenStatus(pose);
+  }
+  animateNoticeScreenZoom(pose);
+}
+
+function animateNoticeScreenZoom(pose) {
+  if (pose.zoomRaf !== null) { cancelAnimationFrame(pose.zoomRaf); pose.zoomRaf = null; }
+  const apply = (rect) => {
+    pose.zoomCurrent = rect;
+    if (!pose.zoomEl) return;
+    pose.zoomEl.setAttribute("transform", rect.scale === 1
+      ? ""
+      : noticeLayout.zoomTransform(noticeLayout.SCREEN_RECT, toCarrierFrame(pose, rect)));
+  };
+  const from = pose.zoomCurrent;
+  const to = pose.zoomTarget;
+  if (pose.reducedMotion || !pose.zoomEl) {
+    apply(to);
+    return;
+  }
+  const startedAt = Date.now();
+  const tick = () => {
+    pose.zoomRaf = null;
+    if (pose.ended) return;
+    const t = (Date.now() - startedAt) / noticeLayout.ZOOM_TRANSITION_MS;
+    if (t >= 1) {
+      apply(to);
+      return;
+    }
+    apply(noticeLayout.interpolateRect(from, to, noticeLayout.easeOutCubic(t)));
+    pose.zoomRaf = requestAnimationFrame(tick);
+  };
+  pose.zoomRaf = requestAnimationFrame(tick);
+}
+
+// The zoom group sits inside #notice-sign-car, which is translated to the hand
+// holding the sign; zoom rects are absolute, so shift them into that frame.
+function toCarrierFrame(pose, rect) {
+  const dx = pose.side === "left" ? noticeLayout.LEFT_HAND_DX : 0;
+  return { ...rect, x: rect.x - dx };
+}
+
+// Places the sign: the carrier at (dx, dy) from its right-hand spot, the arms
+// raised on `arms`, and a hand on the stick unless the sign is in the air.
+function applyNoticeSignPlacement(pose, dx, dy, arms, holding) {
+  if (pose.carrierEl) {
+    pose.carrierEl.setAttribute("transform", dx === 0 && dy === 0
+      ? ""
+      : `translate(${dx.toFixed(3)} ${dy.toFixed(3)})`);
+  }
+  const show = (node, on) => node.setAttribute("visibility", on ? "visible" : "hidden");
+  if (pose.armsEls) {
+    show(pose.armsEls.right, arms === "right");
+    show(pose.armsEls.left, arms === "left");
+  }
+  if (pose.handEls) {
+    show(pose.handEls.right, holding && arms === "right");
+    show(pose.handEls.left, holding && arms === "left");
+  }
+}
+
+// Every TOSS_HOLD_MS the sign changes hands, unless the board is being read
+// or motion is reduced. Needs the carrier, arms and hands from the asset.
+function scheduleNoticeSignToss(pose) {
+  if (pose.tossTimer) { clearTimeout(pose.tossTimer); pose.tossTimer = null; }
+  if (pose.ended || pose.reducedMotion || pose.hovering || pose.tossStart !== null) return;
+  if (!pose.carrierEl || !pose.armsEls || !pose.handEls) return;
+  pose.tossTimer = setTimeout(() => {
+    pose.tossTimer = null;
+    startNoticeSignToss(pose);
+  }, Math.max(0, pose.nextTossAt - Date.now()));
+}
+
+function startNoticeSignToss(pose) {
+  if (pose.ended || noticeScreenPose !== pose || pose.hovering || pose.tossStart !== null) return;
+  // A zoom still shrinking back after a leave snaps home before the throw.
+  if (pose.leaveTimer) { clearTimeout(pose.leaveTimer); pose.leaveTimer = null; }
+  if (pose.zoomRaf !== null) { cancelAnimationFrame(pose.zoomRaf); pose.zoomRaf = null; }
+  pose.wheelScale = noticeLayout.HOVER_ZOOM_SCALE;
+  pose.wheelCarry = 0;
+  pose.zoomEl.setAttribute("transform", "");
+  pose.tossStart = Date.now();
+  const from = pose.side;
+  const tick = () => {
+    pose.tossRaf = null;
+    if (pose.ended) return;
+    const t = (Date.now() - pose.tossStart) / noticeLayout.TOSS_MS;
+    if (t < 1) {
+      const at = noticeLayout.tossPose(from, t);
+      applyNoticeSignPlacement(pose, at.dx, at.dy, at.arms, false);
+      pose.tossRaf = requestAnimationFrame(tick);
+      return;
+    }
+    pose.tossStart = null;
+    pose.side = from === "left" ? "right" : "left";
+    applyNoticeSignPlacement(pose, pose.side === "left" ? noticeLayout.LEFT_HAND_DX : 0, 0, pose.side, true);
+    // Main hit-tests clicks against the reported rect: tell it where the
+    // board landed.
+    pose.zoomTarget = noticeLayout.computeZoomRect(noticeLayout.signRect(pose.side), 1, null);
+    pose.zoomCurrent = pose.zoomTarget;
+    reportNoticeScreenStatus(pose);
+    pose.nextTossAt = Date.now() + noticeLayout.TOSS_HOLD_MS;
+    scheduleNoticeSignToss(pose);
+  };
+  pose.tossRaf = requestAnimationFrame(tick);
+}
+
+// Main copied the notice's text after a right-click on the screen.
+function handleNoticeScreenCopied(info) {
+  const pose = noticeScreenPose;
+  if (!pose || pose.ended || !pose.lineEl || !pose.feedbackEl) return;
+  if (info && info.id && pose.id && info.id !== pose.id) return;
+  if (pose.feedbackTimer) clearTimeout(pose.feedbackTimer);
+  pose.lineEl.setAttribute("visibility", "hidden");
+  pose.feedbackEl.setAttribute("visibility", "visible");
+  pose.feedbackTimer = setTimeout(() => {
+    pose.feedbackTimer = null;
+    if (pose.ended) return;
+    pose.feedbackEl.setAttribute("visibility", "hidden");
+    pose.lineEl.removeAttribute("visibility");
+  }, noticeLayout.COPY_FEEDBACK_MS);
+}
+
+if (window.electronAPI && typeof window.electronAPI.onNoticeScreenPointer === "function") {
+  window.electronAPI.onNoticeScreenPointer(handleNoticeScreenPointer);
+}
+if (window.electronAPI && typeof window.electronAPI.onNoticeScreenCopied === "function") {
+  window.electronAPI.onNoticeScreenCopied(handleNoticeScreenCopied);
 }
 
 // Release an <object> SVG element: navigate away to unload the SVG document
@@ -1312,14 +1959,21 @@ if (window.electronAPI && typeof window.electronAPI.onLowPowerIdleModeChange ===
 
 window.electronAPI.onDndChange((enabled) => {
   dndEnabled = enabled;
-  if (dndEnabled) clearTestReactionVisuals();
+  if (dndEnabled) {
+    clearTestReactionVisuals();
+    // DND ends a head-screen pose at once; main's own state change follows.
+    abortNoticeScreenPose();
+  }
 });
 
 window.electronAPI.onMiniModeChange((enabled, edge, options) => {
   const preEntry = !!(options && options.preEntry);
   _miniPreEntryMode = !!enabled && preEntry;
   _inMiniMode = !!enabled && !preEntry;
-  if (enabled) clearTestReactionVisuals();
+  if (enabled) {
+    clearTestReactionVisuals();
+    abortNoticeScreenPose();
+  }
   miniLeftFlip = !!enabled && edge === "left";
   container.classList.toggle("mini-left", miniLeftFlip);
   applyMiniFlip(clawdEl, currentState);
@@ -1568,11 +2222,16 @@ window.electronAPI.onCancelClickReaction(() => {
   endReaction();
 });
 
+// durationMs === null means the caller ends the reaction itself (the notice
+// head screen, whose dwell pauses while hovered). options.onReady(el) runs
+// once the reaction's media element is displayed.
 function playReaction(requestOrFile, durationMs, options) {
   // A reaction preview now runs as long as the clip, so the next one can start
   // while this timer is still pending. Clearing it first keeps the old timer
   // from firing mid-clip and ending the new reaction early.
   if (reactTimer) { clearTimeout(reactTimer); reactTimer = null; }
+  // Any reaction replaces a head-screen pose that is still up.
+  endNoticeScreenPose();
   const visualRequest = normalizeVisualRequest(requestOrFile);
   const svgFile = visualRequest ? visualRequest.file : requestOrFile;
   isSettingsPreviewReaction = !!(options && options.settingsPreview);
@@ -1583,9 +2242,11 @@ function playReaction(requestOrFile, durationMs, options) {
 
   // Reactions do not attach eye tracking, but some themes force SVGs through
   // <object> so their SVG documents can load local sub-resources.
-  swapToFile(svgFile, null, undefined, { visualRequest });
+  const onReady = options && typeof options.onReady === "function" ? options.onReady : null;
+  if (onReady) swapToFile(svgFile, null, undefined, { visualRequest, onReady });
+  else swapToFile(svgFile, null, undefined, { visualRequest });
 
-  reactTimer = setTimeout(() => endReaction(), durationMs);
+  if (durationMs !== null) reactTimer = setTimeout(() => endReaction(), durationMs);
 }
 
 function endReaction() {
@@ -1593,6 +2254,7 @@ function endReaction() {
   isReacting = false;
   isSettingsPreviewReaction = false;
   reactTimer = null;
+  endNoticeScreenPose();
   // A drag reaction holds the same cursor-polling pause and is still running;
   // endDragReaction() releases it when the drag itself ends.
   if (isDragReacting) return;
@@ -1605,6 +2267,7 @@ function cancelReaction() {
     isReacting = false;
     isSettingsPreviewReaction = false;
   }
+  endNoticeScreenPose();
   if (isDragReacting) {
     isDragReacting = false;
   }
@@ -1769,6 +2432,7 @@ function startDragReaction(requestOrDirection, legacyDirection) {
     if (reactTimer) { clearTimeout(reactTimer); reactTimer = null; }
     isReacting = false;
     isSettingsPreviewReaction = false;
+    endNoticeScreenPose();
   }
 
   isDragReacting = true;

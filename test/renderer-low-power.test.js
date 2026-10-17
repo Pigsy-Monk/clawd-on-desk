@@ -10,6 +10,7 @@ const RENDERER = path.join(__dirname, "..", "src", "renderer.js");
 const ACCESSORY_LAYOUT = path.join(__dirname, "..", "src", "pet-accessory-layout.js");
 const ACCESSORY_MIRROR = path.join(__dirname, "..", "src", "pet-accessory-mirror.js");
 const ACCESSORY_DESCRIPTOR = path.join(__dirname, "..", "src", "pet-accessory-descriptor.js");
+const NOTICE_SCREEN_LAYOUT = path.join(__dirname, "..", "src", "notice-screen-layout.js");
 const PRELOAD = path.join(__dirname, "..", "src", "preload.js");
 const MAIN = path.join(__dirname, "..", "src", "main.js");
 
@@ -340,6 +341,7 @@ function createRendererHarness(options = {}) {
 const source = `${readNormalized(ACCESSORY_LAYOUT)}
 ${readNormalized(ACCESSORY_MIRROR)}
 ${readNormalized(ACCESSORY_DESCRIPTOR)}
+${readNormalized(NOTICE_SCREEN_LAYOUT)}
 ${readNormalized(RENDERER)}
 globalThis.__rendererTest = {
   initWithConfig,
@@ -384,6 +386,7 @@ globalThis.__rendererTest = {
   get lastAccessoryGeneration() { return _lastAccessoryGeneration; },
   get lowPowerSvgPaused() { return lowPowerSvgPaused; },
   get eyeTarget() { return eyeTarget; },
+  get noticeScreenPose() { return noticeScreenPose; },
 };`;
   vm.runInNewContext(source, context);
 
@@ -2722,6 +2725,7 @@ describe("renderer pet accessory wardrobe", () => {
       "pet-accessory-mirror.js",
       "pet-accessory-descriptor.js",
       "pet-visual-swap-policy.js",
+      "notice-screen-layout.js",
     ]) {
       const dependencyIndex = html.indexOf(`src="${dependency}"`);
       assert.notStrictEqual(dependencyIndex, -1, `${dependency} must be loaded by index.html`);
@@ -3444,5 +3448,315 @@ describe("renderer reaction preview scope", () => {
 
     harness.timers.find((entry) => entry.ms === 4600).callback();
     assert.strictEqual(resumes(harness), 1);
+  });
+});
+
+describe("renderer notice sign", () => {
+  const SCREEN_FILE = "clawd-notice-screen.svg";
+
+  class FakeSvgNode {
+    constructor(tagName, widths) {
+      this.tagName = tagName;
+      this.attributes = new Map();
+      this.children = [];
+      this.textContent = "";
+      this.widths = widths;
+    }
+    setAttribute(name, value) { this.attributes.set(name, String(value)); }
+    getAttribute(name) { return this.attributes.has(name) ? this.attributes.get(name) : null; }
+    removeAttribute(name) { this.attributes.delete(name); }
+    appendChild(child) { this.children.push(child); child.parentNode = this; return child; }
+    removeChild(child) { this.children = this.children.filter((c) => c !== child); return child; }
+    get firstChild() { return this.children[0] || null; }
+    getComputedTextLength() {
+      return this.widths && Object.prototype.hasOwnProperty.call(this.widths, this.textContent)
+        ? this.widths[this.textContent]
+        : this.textContent.length;
+    }
+  }
+
+  function createSvgDocument(widths = {}) {
+    const nodes = {};
+    for (const id of [
+      "notice-line", "notice-screen-zoom", "notice-sign-car", "notice-chalk",
+      "notice-arms-right", "notice-arms-left", "notice-hand-right", "notice-hand-left",
+    ]) {
+      nodes[id] = new FakeSvgNode(id === "notice-chalk" ? "rect" : "g", widths);
+    }
+    return {
+      nodes,
+      getElementById: (id) => nodes[id] || null,
+      createElementNS: (ns, tag) => {
+        assert.strictEqual(ns, "http://www.w3.org/2000/svg");
+        return new FakeSvgNode(tag, widths);
+      },
+    };
+  }
+
+  function createScreenHarness(options = {}) {
+    const harness = createRendererHarness({
+      themeConfig: {
+        rendering: { objectChannelFiles: [SCREEN_FILE] },
+        reactions: {
+          "notice-screen": { file: SCREEN_FILE },
+          notification: { file: "notif.svg", duration: 3000 },
+        },
+        ...(options.themeConfig || {}),
+      },
+    });
+    if (options.reducedMotion) {
+      harness.context.window.matchMedia = () => ({ matches: true });
+    }
+    return harness;
+  }
+
+  function visualRequest(generation = 5, file = SCREEN_FILE) {
+    return {
+      themeId: "clawd",
+      logicalState: "idle",
+      displayState: "idle",
+      file,
+      source: "reaction",
+      visualGeneration: generation,
+    };
+  }
+
+  // Plays a notice and loads the sign document; returns the fake document.
+  function playAndLoad(harness, notice = {}, widths = {}) {
+    harness.electronHandlers.onPlayNoticeReaction({
+      level: "warn",
+      id: "n1",
+      title: "Disk almost full",
+      visualRequest: visualRequest(),
+      ...notice,
+    });
+    const pending = harness.api.pendingNext;
+    assert.ok(pending, "the sign sprite should be loading");
+    assert.strictEqual(pending.tagName, "OBJECT", "the sign needs a scriptable document");
+    const doc = createSvgDocument(widths);
+    pending.contentDocument = doc;
+    pending.listeners.get("load")();
+    return doc;
+  }
+
+  function statusCalls(harness) {
+    return JSON.parse(JSON.stringify(
+      harness.electronCalls.filter((c) => c.name === "reportNoticeScreenStatus").map((c) => c.args[0])
+    ));
+  }
+
+  // Dwell timers only: the hand-to-hand toss timer sits in the same range.
+  function dwellTimers(harness, min = 3900, max = 15000) {
+    const pose = harness.api.noticeScreenPose;
+    const toss = pose ? pose.tossTimer : null;
+    return harness.activeTimers().filter((t) => t !== toss && t.ms >= min && t.ms <= max);
+  }
+
+  const BOARD = { x: 4.6, y: -9, w: 20, h: 9.6 };
+  const visible = (node) => node.getAttribute("visibility") !== "hidden";
+
+  it("chalks prompt and title as DOM nodes and reports the board to main", () => {
+    const harness = createScreenHarness();
+    const doc = playAndLoad(harness, { title: "<b>Disk</b> almost full" });
+
+    assert.ok(harness.electronCalls.some((c) => c.name === "pauseCursorPolling"));
+    const settled = harness.electronCalls.filter((c) => c.name === "notifyPetVisualSettled").map((c) => c.args[0]);
+    assert.strictEqual(settled.at(-1).outcome, "swapped");
+    assert.strictEqual(settled.at(-1).visualGeneration, 5);
+
+    const [line, feedback] = doc.nodes["notice-line"].children;
+    const [prompt, title] = line.children;
+    assert.strictEqual(line.children.length, 2, "a chalkboard has no cursor");
+    assert.strictEqual(prompt.textContent, "!");
+    assert.strictEqual(prompt.getAttribute("fill"), "#FFC857");
+    assert.strictEqual(title.textContent, "<b>Disk</b> almost full", "agent text stays text");
+    assert.strictEqual(title.getAttribute("fill"), "#F2F2E6");
+    assert.strictEqual(feedback.textContent, "已复制 ✓");
+    assert.strictEqual(feedback.getAttribute("visibility"), "hidden");
+    assert.strictEqual(doc.nodes["notice-chalk"].getAttribute("fill"), "#FFC857", "the chalk stub takes the level colour");
+
+    const status = statusCalls(harness);
+    assert.deepStrictEqual(status[0], { active: true, id: "n1", rect: BOARD });
+  });
+
+  it("holds a short line 4 s, then hands the pet back and keeps the card held", () => {
+    const harness = createScreenHarness();
+    playAndLoad(harness, {}, { "!": 1.2, "Disk almost full": 6 });
+    assert.strictEqual(harness.api.isReacting, true);
+    const dwells = dwellTimers(harness);
+    assert.strictEqual(dwells.length, 1, "a dwell timer replaces the fixed reaction timer");
+    const [dwell] = dwells;
+    assert.ok(dwell.ms <= 4000 && dwell.ms > 3900, String(dwell.ms));
+
+    dwell.cleared = true;
+    dwell.callback();
+    assert.strictEqual(harness.api.isReacting, false);
+    assert.strictEqual(harness.api.noticeScreenPose, null);
+    assert.deepStrictEqual(statusCalls(harness).at(-1), { active: false, id: "n1", rect: null, reason: "dwell" });
+    assert.ok(harness.electronCalls.some((c) => c.name === "resumeFromReaction"));
+  });
+
+  it("stretches the dwell to three marquee passes for a long line, capped at 15 s", () => {
+    const harness = createScreenHarness();
+    // Prompt 1.2 + gap 0.7 + title 20 from x 6.4 ends at 28.3: 5.5 units past
+    // the 22.8 limit.
+    playAndLoad(harness, {}, { "!": 1.2, "Disk almost full": 20 });
+    const expected = 3 * (800 + Math.round(5.5 * 260) + 900);
+    const [dwell] = dwellTimers(harness);
+    assert.ok(Math.abs(dwell.ms - expected) <= 50, `${dwell.ms} vs ${expected}`);
+
+    const capped = createScreenHarness();
+    playAndLoad(capped, {}, { "!": 1.2, "Disk almost full": 200 });
+    const [cap] = dwellTimers(capped, 3900, 16000);
+    assert.ok(cap.ms <= 15000 && cap.ms > 14900, String(cap.ms));
+  });
+
+  it("pauses the dwell and the tosses while hovered, zooms 1.5x, and resumes on leave", () => {
+    const harness = createScreenHarness();
+    playAndLoad(harness);
+    const pose = harness.api.noticeScreenPose;
+    assert.ok(pose.tossTimer, "a toss is scheduled");
+    const pointer = harness.electronHandlers.onNoticeScreenPointer;
+
+    pointer({ type: "move", x: 14, y: -4 });
+    assert.deepStrictEqual(dwellTimers(harness), [], "the countdown is paused");
+    assert.strictEqual(pose.tossTimer, null, "the board stays in this hand while read");
+    const zoomed = statusCalls(harness).at(-1);
+    assert.ok(Math.abs(zoomed.rect.w - 30) < 1e-9 && Math.abs(zoomed.rect.h - 14.4) < 1e-9, JSON.stringify(zoomed.rect));
+
+    // Moving inside the grown board (outside the 1x one) is still a hover.
+    pointer({ type: "move", x: 1, y: -11 });
+    assert.deepStrictEqual(dwellTimers(harness), []);
+
+    pointer({ type: "wheel", x: 14, y: -4, deltaY: -100, deltaMode: 0 });
+    assert.strictEqual(statusCalls(harness).at(-1).rect.w, 20 * 1.75);
+
+    pointer({ type: "leave" });
+    assert.strictEqual(dwellTimers(harness).length, 1, "leaving resumes the countdown");
+    assert.ok(pose.tossTimer, "and the tosses");
+    const shrink = harness.activeTimers().find((t) => t.ms === 300);
+    assert.ok(shrink, "the zoom lingers 300 ms");
+    shrink.cleared = true;
+    shrink.callback();
+    assert.deepStrictEqual(statusCalls(harness).at(-1).rect, BOARD);
+  });
+
+  it("tosses the sign over the head into the other hand and reports where it landed", () => {
+    const harness = createScreenHarness();
+    const doc = playAndLoad(harness);
+    const pose = harness.api.noticeScreenPose;
+    const n = doc.nodes;
+    assert.ok(visible(n["notice-arms-right"]) && !visible(n["notice-arms-left"]));
+    assert.ok(visible(n["notice-hand-right"]) && !visible(n["notice-hand-left"]));
+
+    const toss = pose.tossTimer;
+    toss.cleared = true;
+    toss.callback();
+    assert.notStrictEqual(pose.tossStart, null);
+    // Hover is ignored while the board is in the air.
+    const before = statusCalls(harness).length;
+    harness.electronHandlers.onNoticeScreenPointer({ type: "move", x: 14, y: -4 });
+    assert.strictEqual(statusCalls(harness).length, before);
+    assert.strictEqual(pose.hovering, false);
+
+    // Halfway: over the head, arms swapped, no hand on the stick.
+    pose.tossStart -= 340;
+    let frame = pose.tossRaf;
+    frame.cleared = true;
+    frame.callback();
+    const [, dx, dy] = n["notice-sign-car"].getAttribute("transform").match(/^translate\(([-\d.]+) ([-\d.]+)\)$/).map(Number);
+    // Just past the top of the arc (eased, so already most of the way over).
+    assert.ok(dx < -6 && dx > -10 && Math.abs(dy - -3) < 0.2, `${dx} ${dy}`);
+    assert.ok(visible(n["notice-arms-left"]) && !visible(n["notice-arms-right"]));
+    assert.ok(!visible(n["notice-hand-left"]) && !visible(n["notice-hand-right"]));
+
+    // Landed in the left hand.
+    pose.tossStart -= 1000;
+    frame = pose.tossRaf;
+    frame.cleared = true;
+    frame.callback();
+    assert.strictEqual(pose.side, "left");
+    assert.strictEqual(pose.tossStart, null);
+    assert.strictEqual(n["notice-sign-car"].getAttribute("transform"), "translate(-14.200 0.000)");
+    assert.ok(visible(n["notice-hand-left"]) && !visible(n["notice-hand-right"]));
+    assert.deepStrictEqual(statusCalls(harness).at(-1).rect, { ...BOARD, x: 4.6 - 14.2 });
+    assert.ok(pose.tossTimer, "the next toss is scheduled");
+
+    // Hover now tests the left-hand board.
+    harness.electronHandlers.onNoticeScreenPointer({ type: "move", x: 0, y: -4 });
+    assert.strictEqual(pose.hovering, true);
+  });
+
+  it("is cut short by a real state change and says so, without asking for the state back", () => {
+    const harness = createScreenHarness();
+    playAndLoad(harness);
+    harness.electronHandlers.onStateChange("working", "working.svg");
+    assert.strictEqual(harness.api.noticeScreenPose, null);
+    assert.deepStrictEqual(statusCalls(harness).at(-1), { active: false, id: "n1", rect: null, reason: "cancel" });
+    assert.ok(!harness.electronCalls.some((c) => c.name === "resumeFromReaction"));
+  });
+
+  it("ends the old pose as 'replaced' when a newer notice takes the sign", () => {
+    const harness = createScreenHarness();
+    playAndLoad(harness);
+    harness.electronHandlers.onPlayNoticeReaction({
+      level: "info", id: "n2", title: "Next", visualRequest: visualRequest(6),
+    });
+    const ended = statusCalls(harness).filter((s) => s.active === false);
+    assert.deepStrictEqual(ended, [{ active: false, id: "n1", rect: null, reason: "replaced" }]);
+    assert.strictEqual(harness.api.noticeScreenPose.id, "n2");
+  });
+
+  it("flashes the copy confirmation on the board", () => {
+    const harness = createScreenHarness();
+    const doc = playAndLoad(harness);
+    const [line, feedback] = doc.nodes["notice-line"].children;
+    harness.electronHandlers.onNoticeScreenCopied({ id: "n1" });
+    assert.strictEqual(line.getAttribute("visibility"), "hidden");
+    assert.strictEqual(feedback.getAttribute("visibility"), "visible");
+    const restore = harness.activeTimers().find((t) => t.ms === 1200);
+    restore.cleared = true;
+    restore.callback();
+    assert.strictEqual(line.getAttribute("visibility"), null);
+    assert.strictEqual(feedback.getAttribute("visibility"), "hidden");
+  });
+
+  it("drops the tosses, the marquee and the zoom animation under reduced motion", () => {
+    const harness = createScreenHarness({ reducedMotion: true });
+    const doc = playAndLoad(harness, {}, { "!": 1.2, "Disk almost full": 20 });
+    const [line] = doc.nodes["notice-line"].children;
+    assert.strictEqual(harness.api.noticeScreenPose.tossTimer, null, "the sign stays in one hand");
+    harness.electronHandlers.onNoticeScreenPointer({ type: "move", x: 14, y: -4 });
+    // Zoom snaps instead of animating.
+    assert.ok(doc.nodes["notice-screen-zoom"].getAttribute("transform").includes("scale(1.5)"));
+    assert.strictEqual(line.getAttribute("transform"), "");
+  });
+
+  it("keeps the per-level reaction for a theme without a sign", () => {
+    const harness = createScreenHarness({
+      themeConfig: {
+        reactions: { notification: { file: "notif.svg", duration: 3000 } },
+      },
+    });
+    harness.electronHandlers.onPlayNoticeReaction({
+      level: "warn",
+      id: "n1",
+      title: "x",
+      visualRequest: visualRequest(9),
+    });
+    const settled = harness.electronCalls.filter((c) => c.name === "notifyPetVisualSettled").map((c) => c.args[0]);
+    assert.deepStrictEqual(
+      settled.map((s) => [s.visualGeneration, s.outcome]),
+      [[9, "failed"]],
+      "the unused sign request is settled at once"
+    );
+    assert.ok(harness.api.pendingNext.src.includes("notif.svg") || harness.api.pendingNext.data.includes("notif.svg"));
+    assert.ok(harness.activeTimers().some((t) => t.ms === 3000));
+    assert.deepStrictEqual(statusCalls(harness), []);
+
+    const bare = createScreenHarness();
+    bare.electronHandlers.onPlayNoticeReaction({ level: "warn", id: null, title: "" });
+    assert.ok(bare.api.pendingNext.src.includes("notif.svg") || bare.api.pendingNext.data.includes("notif.svg"));
+    assert.strictEqual(bare.api.noticeScreenPose, null);
   });
 });
