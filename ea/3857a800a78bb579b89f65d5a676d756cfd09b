@@ -1,0 +1,24 @@
+src/notice-bubble.html
+  s_fcfb4c3a34b5c9::t_cddae4fe2f947d 285-286
+  s_fcfb4c3a34b5c9::t_77c34bcdbcf202 280-284,287-296,829-847,851-865,890,907-910,913,936-943,952,966
+test/notice-bubble.test.js
+  s_fcfb4c3a34b5c9::t_b4079135f858d2 158-169,657-674
+src/notice-bubble.js
+  s_fcfb4c3a34b5c9::t_77c34bcdbcf202 37-38,122-124
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.50-trip",
+  "base_commit_sha": "ea3857a800a78bb579b89f65d5a676d756cfd09b",
+  "prompts": {},
+  "sessions": {
+    "s_fcfb4c3a34b5c9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "91bf79ba-6310-4db7-a9c0-b11cfd6cb408",
+        "model": "claude-opus-5.5"
+      },
+      "human_author": "zwsong <zwsong@trip.com>"
+    }
+  }
+}
