@@ -16,6 +16,7 @@
     "noticeHistoryEnabled",
     "soundVolume",
     "lowPowerIdleMode",
+    "ignoreReducedMotion",
     "keepAwakeWhileWorking",
     "showTray",
     "showDock",
@@ -578,6 +579,11 @@
         key: "lowPowerIdleMode",
         labelKey: "rowLowPowerIdleMode",
         descKey: "rowLowPowerIdleModeDesc",
+      }),
+      helpers.buildSwitchRow({
+        key: "ignoreReducedMotion",
+        labelKey: "rowIgnoreReducedMotion",
+        descKey: "rowIgnoreReducedMotionDesc",
       }),
       helpers.buildSwitchRow({
         key: "keepAwakeWhileWorking",

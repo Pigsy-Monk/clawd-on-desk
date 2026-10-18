@@ -324,6 +324,12 @@ const SCHEMA = {
   // Off only stops new recording; clearing is an explicit Dashboard action.
   noticeHistoryEnabled: { type: "boolean", default: true },
   lowPowerIdleMode: { type: "boolean", default: false },
+  // Keep the pet animated when the OS asks apps for reduced motion (Windows
+  // "Show animations" off, macOS "Reduce motion"). Default OFF: the system
+  // setting is an accessibility choice, so honouring it is the default; this
+  // is for users who want the rest of the system calm and the pet moving.
+  // See src/reduced-motion-override.js.
+  ignoreReducedMotion: { type: "boolean", default: false },
   mobilePreviewEnabled: { type: "boolean", default: false },
   // Separate, explicit consent for the broader permission-summary disclosure.
   // Never infer this from the legacy session-only mobile preview opt-in.

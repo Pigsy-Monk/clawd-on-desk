@@ -11273,6 +11273,29 @@ describe("settings renderer browser environment", () => {
     }
   });
 
+  it("renders the reduced-motion override right after low-power mode, off by default, in every language", () => {
+    const harness = loadGeneralTabForTest({ snapshot: makeGeneralSnapshot({}) });
+    harness.renderContent();
+
+    const meta = harness.getSwitchMeta("ignoreReducedMotion");
+    assert.ok(meta);
+    assert.strictEqual(meta.element.classList.contains("on"), false);
+    assert.strictEqual(meta.row.querySelector(".row-label").textContent, "Animate even when the system reduces motion");
+    assert.match(meta.row.querySelector(".row-desc").textContent, /DevTools/);
+
+    const generalSource = fs.readFileSync(path.join(SRC_DIR, "settings-tab-general.js"), "utf8");
+    const lowPowerAt = generalSource.indexOf('key: "lowPowerIdleMode"');
+    const overrideAt = generalSource.indexOf('key: "ignoreReducedMotion"');
+    assert.ok(lowPowerAt > 0 && overrideAt > lowPowerAt && overrideAt - lowPowerAt < 200);
+
+    const i18nSource = fs.readFileSync(SETTINGS_I18N, "utf8");
+    for (const key of ["rowIgnoreReducedMotion", "rowIgnoreReducedMotionDesc"]) {
+      const matches = i18nSource.match(new RegExp(`\\b${key}:`, "g"));
+      assert.strictEqual(matches ? matches.length : 0, SUPPORTED_LANGS.length,
+        `${key} should appear in all ${SUPPORTED_LANGS.length} supported languages`);
+    }
+  });
+
   it("renders Free roam movement style as a dependent segmented choice", async () => {
     const generalSource = fs.readFileSync(path.join(SRC_DIR, "settings-tab-general.js"), "utf8");
     const i18nSource = fs.readFileSync(SETTINGS_I18N, "utf8");

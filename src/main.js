@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Notification, screen, ipcMain, globalShortcut, nativeTheme, dialog, shell, nativeImage, powerSaveBlocker, powerMonitor, clipboard, safeStorage, net } = require("electron");
+const { app, BrowserWindow, Notification, screen, ipcMain, globalShortcut, nativeTheme, dialog, shell, nativeImage, powerSaveBlocker, powerMonitor, clipboard, safeStorage, net, webContents } = require("electron");
 const { maybeRunPackageKoffiSmoke } = require("./package-koffi-smoke");
 if (maybeRunPackageKoffiSmoke({ app, BrowserWindow })) {
   return;
@@ -160,6 +160,7 @@ const initNoticeBubble = require("./notice-bubble");
 const { registerNoticeBubbleIpc } = initNoticeBubble;
 const { noticeCopyText } = require("./notice-text");
 const initNoticeChartWindow = require("./notice-chart-window");
+const { createReducedMotionOverride } = require("./reduced-motion-override");
 const { registerNoticeChartIpc } = initNoticeChartWindow;
 const createSettingsAnimationOverridesMain = require("./settings-animation-overrides-main");
 const { registerSettingsAnimationOverridesIpc } = createSettingsAnimationOverridesMain;
@@ -3067,6 +3068,18 @@ broadcastDashboardNoticeHistory = () => {
 };
 // The Notices tab shows whether recording is on, so a flip re-reads it.
 _settingsController.subscribeKey("noticeHistoryEnabled", () => broadcastDashboardNoticeHistory());
+
+// "Animate even when the system reduces motion": every page of the app is
+// tracked as it is created and gets the media override while the pref is on.
+const reducedMotionOverride = createReducedMotionOverride({
+  isEnabled: () => _settingsController.get("ignoreReducedMotion") === true,
+  log: (message) => console.log(`Clawd: ${message}`),
+});
+app.on("web-contents-created", (_event, contents) => reducedMotionOverride.track(contents));
+if (webContents && typeof webContents.getAllWebContents === "function") {
+  for (const contents of webContents.getAllWebContents()) reducedMotionOverride.track(contents);
+}
+_settingsController.subscribeKey("ignoreReducedMotion", () => { reducedMotionOverride.sync(); });
 // The quick host is a real window whose own `close` handler refuses to close
 // (it is a borrow surface for the shared page, not something the user destroys).
 // Electron closes every window BEFORE `will-quit`, so disposing it only there

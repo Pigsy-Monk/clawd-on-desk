@@ -283,6 +283,13 @@ describe("updateRegistry pure-data validators", () => {
     assert.strictEqual(updateRegistry.noticeHistoryEnabled(0).status, "error");
   });
 
+  it("accepts only a boolean for the reduced-motion override", () => {
+    assert.strictEqual(updateRegistry.ignoreReducedMotion(true).status, "ok");
+    assert.strictEqual(updateRegistry.ignoreReducedMotion(false).status, "ok");
+    assert.strictEqual(updateRegistry.ignoreReducedMotion("true").status, "error");
+    assert.strictEqual(updateRegistry.ignoreReducedMotion(1).status, "error");
+  });
+
   it("accepts only supported bubble placement enums", () => {
     for (const value of ["auto", "left", "right"]) {
       assert.strictEqual(updateRegistry.bubbleFollowPreference(value).status, "ok");

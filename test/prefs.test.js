@@ -382,6 +382,13 @@ describe("prefs.validate", () => {
     assert.strictEqual(prefs.validate({ noticeHistoryEnabled: "no" }).noticeHistoryEnabled, true);
   });
 
+  it("defaults the reduced-motion override off and keeps an explicit on", () => {
+    assert.strictEqual(prefs.getDefaults().ignoreReducedMotion, false);
+    assert.strictEqual(prefs.validate({}).ignoreReducedMotion, false);
+    assert.strictEqual(prefs.validate({ ignoreReducedMotion: true }).ignoreReducedMotion, true);
+    assert.strictEqual(prefs.validate({ ignoreReducedMotion: "yes" }).ignoreReducedMotion, false);
+  });
+
   it("validates bubble placement enums independently from the follow toggle", () => {
     const valid = prefs.validate({
       bubbleFollowPet: true,

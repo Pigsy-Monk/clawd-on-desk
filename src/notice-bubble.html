@@ -1061,6 +1061,12 @@ function tickPoseStages(now) {
 function startPoseLoop() {
   if (poseFrame === null) poseFrame = requestAnimationFrame(tickPoseStages);
 }
+// The system setting (or Clawd's "animate anyway" override) can flip while a
+// card is up; a still stage then starts moving without a click.
+if (window.matchMedia) {
+  const motionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+  if (typeof motionQuery.addEventListener === "function") motionQuery.addEventListener("change", startPoseLoop);
+}
 // The frame a reduced-motion stage shows: the most-changed one, so the still
 // still says what the move is.
 function poseStillTime(anim) {

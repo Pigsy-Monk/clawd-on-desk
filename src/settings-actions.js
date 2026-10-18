@@ -340,6 +340,7 @@ const updateRegistry = {
   telegramMigrationLastNotified: requireString("telegramMigrationLastNotified", { allowEmpty: true }),
   feishuApprovalMigrationLastNotified: requireString("feishuApprovalMigrationLastNotified", { allowEmpty: true }),
   lowPowerIdleMode: requireBoolean("lowPowerIdleMode"),
+  ignoreReducedMotion: requireBoolean("ignoreReducedMotion"),
   keepAwakeWhileWorking: requireBoolean("keepAwakeWhileWorking"),
   petTint(value) {
     if (!value || typeof value !== "object" || Array.isArray(value)) {
