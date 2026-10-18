@@ -7,6 +7,7 @@ const { resolveBubbleWorkArea } = require("./bubble-work-area");
 const { clampTextScale, scaleWidth, scaleHeight, applyZoomToWindow } = require("./text-scale");
 const { computeUpdateBubbleBounds } = require("./update-bubble");
 const { noticeCopyText } = require("./notice-text");
+const { isStretchAction } = require("./stretch-session");
 
 const isLinux = process.platform === "linux";
 const isMac = process.platform === "darwin";
@@ -38,6 +39,8 @@ const TREND_SERIES_ROW_HEIGHT = 30;
 const IMAGE_THUMB_HEIGHT = 130;
 // A pose card's chalkboard stage (notice-bubble.html .pose-stage) plus margin.
 const POSE_STAGE_HEIGHT = 220;
+// The stretch card: its board, cue, hint, progress pills and button row.
+const STRETCH_CARD_HEIGHT = 470;
 
 // The renderer's own presentation hints, validated here so a ctx that returns
 // nothing (or nonsense) is normalized once instead of in the page.
@@ -63,6 +66,7 @@ function registerNoticeBubbleIpc(options = {}) {
   requiredDependency(noticeBubble.handleNoticeBubbleDismiss, "noticeBubble.handleNoticeBubbleDismiss", "registerNoticeBubbleIpc");
   requiredDependency(noticeBubble.handleNoticeBubbleExpand, "noticeBubble.handleNoticeBubbleExpand", "registerNoticeBubbleIpc");
   requiredDependency(noticeBubble.handleNoticeBubbleCopy, "noticeBubble.handleNoticeBubbleCopy", "registerNoticeBubbleIpc");
+  const hasStretch = typeof noticeBubble.handleStretchAction === "function";
   const disposers = [];
 
   function on(channel, listener) {
@@ -74,6 +78,7 @@ function registerNoticeBubbleIpc(options = {}) {
   on("notice-bubble-dismiss", (event, id) => noticeBubble.handleNoticeBubbleDismiss(event, id));
   on("notice-bubble-expand", (event, id) => noticeBubble.handleNoticeBubbleExpand(event, id));
   on("notice-bubble-copy", (event, id) => noticeBubble.handleNoticeBubbleCopy(event, id));
+  if (hasStretch) on("notice-bubble-stretch-action", (event, action) => noticeBubble.handleStretchAction(event, action));
 
   return {
     dispose() {
@@ -177,6 +182,9 @@ module.exports = function initNoticeBubble(ctx) {
   // Last notice the renderer asked to expand; the chart window that consumes
   // it lands in a follow-up change.
   let expandedNoticeId = null;
+  // The stretch break's card (setStretchCard), shown under the store's cards.
+  let stretchCard = null;
+  let stretchCardSetAt = 0;
 
   function notifyOrbitGeometryChanged() {
     const reposition = typeof ctx.repositionQuotaRing === "function"
@@ -248,7 +256,13 @@ module.exports = function initNoticeBubble(ctx) {
   }
 
   function estimateHeight() {
-    return Math.max(estimateNoticeStackHeight(notices), CARD_BASE_HEIGHT);
+    const stretchHeight = stretchCard ? STRETCH_CARD_HEIGHT + (notices.length ? CARD_GAP : 0) : 0;
+    return Math.max(estimateNoticeStackHeight(notices) + stretchHeight, CARD_BASE_HEIGHT);
+  }
+
+  // Something to show: store cards, or the stretch card.
+  function hasContent() {
+    return notices.length > 0 || !!stretchCard;
   }
 
   // Everything the renderer needs on top of the notice list itself. Resolved at
@@ -263,6 +277,10 @@ module.exports = function initNoticeBubble(ctx) {
     lastSentTailSide = TAIL_SIDES.has(tailSide) ? tailSide : null;
     return {
       notices,
+      // The stretch break's card, if one is up (src/stretch-runtime.js). Not a
+      // store notice: no TTL, no history, never copied; the page puts it
+      // closest to the pet. `elapsed` is re-read at send time.
+      stretch: stretchCard ? freshStretchCard() : null,
       themeId: typeof themeId === "string" && themeId ? themeId : DEFAULT_THEME_ID,
       tailSide: lastSentTailSide,
       style: NOTICE_STYLES.has(style) ? style : DEFAULT_NOTICE_STYLE,
@@ -283,7 +301,7 @@ module.exports = function initNoticeBubble(ctx) {
       || bubble.isDestroyed()
       || !presentationActive
       || visibilityRestorePending
-      || notices.length === 0
+      || !hasContent()
       || !pageReady()
     ) return false;
     bubble.webContents.send("notice-bubble-show", presentationPayload());
@@ -345,7 +363,7 @@ module.exports = function initNoticeBubble(ctx) {
       // stale partition-persisted factor must never win over prefs.
       const petBounds = ctx.getPetWindowBounds();
       applyZoomToWindow(bubble, getTextScale(getTargetWorkArea(petBounds)));
-      if (notices.length) bubble.webContents.send("notice-bubble-show", presentationPayload());
+      if (hasContent()) bubble.webContents.send("notice-bubble-show", presentationPayload());
     });
 
     if (typeof ctx.guardAlwaysOnTop === "function") ctx.guardAlwaysOnTop(bubble);
@@ -421,7 +439,7 @@ module.exports = function initNoticeBubble(ctx) {
       || !visibilityRestorePending
       || !bubble
       || bubble.isDestroyed()
-      || notices.length === 0
+      || !hasContent()
     ) return false;
     const hidden = typeof hiddenOverride === "boolean" ? hiddenOverride : ctx.petHidden;
     if (hidden) return false;
@@ -454,7 +472,7 @@ module.exports = function initNoticeBubble(ctx) {
 
   function showNoticeBubble(next) {
     if (Array.isArray(next)) notices = next.slice();
-    if (notices.length === 0) {
+    if (!hasContent()) {
       hideNoticeBubble();
       return false;
     }
@@ -500,7 +518,7 @@ module.exports = function initNoticeBubble(ctx) {
   }
 
   function suspendActivePresentation() {
-    if (!bubble || bubble.isDestroyed() || notices.length === 0) return true;
+    if (!bubble || bubble.isDestroyed() || !hasContent()) return true;
     visibilityRestorePending = presentationActive;
     if (hideTimer) {
       clearTimeout(hideTimer);
@@ -524,7 +542,7 @@ module.exports = function initNoticeBubble(ctx) {
   function resumeFromFullscreen() {
     if (!fullscreenSuppressed) return false;
     fullscreenSuppressed = false;
-    if (!visibilityRestorePending || !bubble || bubble.isDestroyed() || notices.length === 0) {
+    if (!visibilityRestorePending || !bubble || bubble.isDestroyed() || !hasContent()) {
       visibilityRestorePending = false;
       return true;
     }
@@ -606,6 +624,44 @@ module.exports = function initNoticeBubble(ctx) {
     return true;
   }
 
+  // Renderer -> main: a button on the stretch card. Only the bubble's own page,
+  // only a whitelisted action, and the runtime decides what it means now.
+  function handleStretchAction(event, action) {
+    const senderWin = BrowserWindow.fromWebContents(event.sender);
+    if (!bubble || senderWin !== bubble) return false;
+    if (!isStretchAction(action) || typeof ctx.onStretchAction !== "function") return false;
+    try {
+      return ctx.onStretchAction(action) === true;
+    } catch {
+      return false;
+    }
+  }
+
+  // The stretch card, or null to take it away. The card's timing (`elapsed`)
+  // is measured from when it was set, so a re-send later (style change, the
+  // window coming back from fullscreen) still lands on the right moment.
+  function setStretchCard(card) {
+    if (card && typeof card === "object") {
+      stretchCard = card;
+      stretchCardSetAt = Date.now();
+    } else {
+      stretchCard = null;
+    }
+    if (!hasContent()) {
+      hideNoticeBubble();
+      return;
+    }
+    showNoticeBubble();
+  }
+
+  function freshStretchCard() {
+    const board = stretchCard.board;
+    if (!board || typeof board.elapsed !== "number" || board.paused) return stretchCard;
+    const limit = typeof board.ms === "number" ? board.ms : Infinity;
+    const elapsed = Math.min(limit, board.elapsed + Math.max(0, Date.now() - stretchCardSetAt));
+    return { ...stretchCard, board: { ...board, elapsed } };
+  }
+
   function shouldHold(fresh) {
     if (fresh.length === 0 || typeof ctx.shouldHoldNewNotices !== "function") return false;
     try {
@@ -625,7 +681,7 @@ module.exports = function initNoticeBubble(ctx) {
     seenIds = ids;
     if (shouldHold(fresh)) for (const n of fresh) heldIds.add(n.id);
     notices = allNotices.filter((n) => !heldIds.has(n.id));
-    if (notices.length === 0) {
+    if (!hasContent()) {
       hideNoticeBubble();
       return;
     }
@@ -638,7 +694,7 @@ module.exports = function initNoticeBubble(ctx) {
     const count = heldIds.size;
     heldIds.clear();
     notices = allNotices.slice();
-    if (notices.length > 0) showNoticeBubble();
+    if (hasContent()) showNoticeBubble();
     return count;
   }
 
@@ -660,6 +716,7 @@ module.exports = function initNoticeBubble(ctx) {
     heldIds.clear();
     allNotices = [];
     seenIds = null;
+    stretchCard = null;
   }
 
   if (ctx.noticeStore && typeof ctx.noticeStore.subscribe === "function") {
@@ -681,6 +738,9 @@ module.exports = function initNoticeBubble(ctx) {
     handleNoticeBubbleDismiss,
     handleNoticeBubbleExpand,
     handleNoticeBubbleCopy,
+    handleStretchAction,
+    setStretchCard,
+    getStretchCard: () => stretchCard,
     syncVisibility,
     revealHeldNotices,
     hasHeldNotices: () => heldIds.size > 0,

@@ -382,6 +382,25 @@ describe("prefs.validate", () => {
     assert.strictEqual(prefs.validate({ noticeHistoryEnabled: "no" }).noticeHistoryEnabled, true);
   });
 
+  it("defaults stretch breaks on, hourly, weekdays 9-19, and rejects bad values", () => {
+    const d = prefs.getDefaults();
+    assert.strictEqual(d.stretchReminderEnabled, true);
+    assert.strictEqual(d.stretchReminderIntervalMinutes, 60);
+    assert.strictEqual(d.stretchReminderStartHour, 9);
+    assert.strictEqual(d.stretchReminderEndHour, 19);
+    assert.strictEqual(d.stretchReminderWorkdaysOnly, true);
+    const ok = prefs.validate({ stretchReminderEnabled: false, stretchReminderIntervalMinutes: 45, stretchReminderStartHour: 22, stretchReminderEndHour: 24 });
+    assert.strictEqual(ok.stretchReminderEnabled, false);
+    assert.strictEqual(ok.stretchReminderIntervalMinutes, 45);
+    assert.strictEqual(ok.stretchReminderStartHour, 22);
+    assert.strictEqual(ok.stretchReminderEndHour, 24);
+    const bad = prefs.validate({ stretchReminderIntervalMinutes: 5, stretchReminderStartHour: 24, stretchReminderEndHour: 0, stretchReminderWorkdaysOnly: "no" });
+    assert.strictEqual(bad.stretchReminderIntervalMinutes, 60);
+    assert.strictEqual(bad.stretchReminderStartHour, 9);
+    assert.strictEqual(bad.stretchReminderEndHour, 19);
+    assert.strictEqual(bad.stretchReminderWorkdaysOnly, true);
+  });
+
   it("defaults the reduced-motion override off and keeps an explicit on", () => {
     assert.strictEqual(prefs.getDefaults().ignoreReducedMotion, false);
     assert.strictEqual(prefs.validate({}).ignoreReducedMotion, false);

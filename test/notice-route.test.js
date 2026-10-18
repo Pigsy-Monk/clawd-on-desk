@@ -10,6 +10,7 @@ const {
   MAX_NOTICE_BODY_BYTES,
   handleNoticePost,
   handleNoticeDelete,
+  handleStretchTryPost,
 } = require("../src/server-route-notice");
 
 function makeReq(body) {
@@ -308,5 +309,27 @@ describe("DELETE /notice", () => {
     assert.strictEqual(res.statusCode, 500);
     assert.strictEqual(res.body, "notice store error");
     assert.ok(logged.some((line) => line.includes("boom")));
+  });
+});
+
+describe("POST /stretch/try", () => {
+  it("asks the stretch runtime for the invite and reports its answer", () => {
+    let calls = 0;
+    const res = makeRes();
+    handleStretchTryPost(makeReq(null), res, { tryStretchNow: () => { calls += 1; return { status: "ok", phase: "sign" }; } });
+    assert.strictEqual(calls, 1);
+    assert.strictEqual(res.statusCode, 200);
+    assert.strictEqual(res.headers[CLAWD_SERVER_HEADER], CLAWD_SERVER_ID);
+    assert.deepStrictEqual(JSON.parse(res.body), { status: "ok", phase: "sign" });
+  });
+
+  it("answers 503 without a runtime or when it throws", () => {
+    const missing = makeRes();
+    handleStretchTryPost(makeReq(null), missing, {});
+    assert.strictEqual(missing.statusCode, 503);
+    const broken = makeRes();
+    handleStretchTryPost(makeReq(null), broken, { tryStretchNow: () => { throw new Error("boom"); } });
+    assert.strictEqual(broken.statusCode, 503);
+    assert.strictEqual(JSON.parse(broken.body).message, "boom");
   });
 });

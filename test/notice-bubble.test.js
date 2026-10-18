@@ -916,3 +916,95 @@ describe("notice-bubble.html", () => {
     assert.match(block[1], /\.card\[data-eyes="on"\] \.card-eyes \{ display: none; \}/);
   });
 });
+
+describe("stretch card in the notice window", () => {
+  const CARD = Object.freeze({
+    id: "stretch", phase: "run", seq: 1, title: "侧弯 · 右侧", dismiss: "end",
+    board: { type: "hold", ms: 12000, elapsed: 2000, paused: false, anim: { frames: [{}] } },
+  });
+  function lastPayload(win) {
+    const shown = win.sent.filter((entry) => entry.channel === "notice-bubble-show");
+    return shown.length ? shown[shown.length - 1].payload : null;
+  }
+
+  it("shows the stretch card alone, below the store's cards, and hides with it", () => {
+    const ctx = createCtx();
+    const bubble = initNoticeBubble(ctx);
+    bubble.setStretchCard(CARD);
+    const win = bubble.getBubbleWindow();
+    assert.ok(win, "window made for the stretch card alone");
+    assert.equal(win.visible, true);
+    let payload = lastPayload(win);
+    assert.deepEqual(payload.notices, []);
+    assert.equal(payload.stretch.title, CARD.title);
+    assert.ok(win.bounds.height >= 470, "room for the board");
+
+    ctx.noticeStore.push(notice("n1"));
+    payload = lastPayload(win);
+    assert.deepEqual(payload.notices.map((n) => n.id), ["n1"]);
+    assert.equal(payload.stretch.id, "stretch", "still there next to a notice");
+
+    ctx.noticeStore.clear();
+    assert.equal(lastPayload(win).stretch.id, "stretch", "an empty store does not hide the break");
+    bubble.setStretchCard(null);
+    assert.equal(win.sent[win.sent.length - 1].channel, "notice-bubble-hide");
+  });
+
+  it("re-sends the card with its clock moved on, but not while paused", async () => {
+    const ctx = createCtx({ getNoticeStyle: () => "card" });
+    const bubble = initNoticeBubble(ctx);
+    bubble.setStretchCard(CARD);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    bubble.refreshPresentation();
+    const moved = lastPayload(bubble.getBubbleWindow()).stretch.board.elapsed;
+    assert.ok(moved >= 2020 && moved <= 12000, `elapsed ${moved}`);
+    bubble.setStretchCard({ ...CARD, board: { ...CARD.board, paused: true } });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    bubble.refreshPresentation();
+    assert.equal(lastPayload(bubble.getBubbleWindow()).stretch.board.elapsed, 2000);
+  });
+
+  it("forwards only whitelisted actions from its own page", () => {
+    const actions = [];
+    const ctx = createCtx({ onStretchAction: (action) => { actions.push(action); return true; } });
+    const bubble = initNoticeBubble(ctx);
+    bubble.setStretchCard(CARD);
+    const win = bubble.getBubbleWindow();
+    const own = { sender: win.webContents };
+    assert.equal(bubble.handleStretchAction(own, "pause"), true);
+    assert.equal(bubble.handleStretchAction(own, "rm"), false);
+    assert.equal(bubble.handleStretchAction({ sender: {} }, "end"), false);
+    assert.deepEqual(actions, ["pause"]);
+  });
+
+  it("registers the stretch action channel when the bubble has one", () => {
+    const channels = [];
+    const forwarded = [];
+    registerNoticeBubbleIpc({
+      ipcMain: { on: (channel, listener) => channels.push({ channel, listener }), removeListener() {} },
+      noticeBubble: {
+        handleNoticeBubbleHeight() {},
+        handleNoticeBubbleDismiss() {},
+        handleNoticeBubbleExpand() {},
+        handleNoticeBubbleCopy() {},
+        handleStretchAction: (event, action) => forwarded.push(action),
+      },
+    });
+    const entry = channels.find((c) => c.channel === "notice-bubble-stretch-action");
+    assert.ok(entry);
+    entry.listener({}, "skip");
+    assert.deepEqual(forwarded, ["skip"]);
+  });
+
+  it("the page builds the stretch card from textContent only and never copies it", () => {
+    const html = fs.readFileSync(path.join(__dirname, "..", "src", "notice-bubble.html"), "utf8");
+    const start = html.indexOf("// ── Stretch card");
+    const end = html.indexOf("// ── Notice styles (comic / pixel)");
+    assert.ok(start > 0 && end > start);
+    const section = html.slice(start, end);
+    assert.doesNotMatch(section, /innerHTML|insertAdjacentHTML|outerHTML/);
+    assert.match(section, /contextmenu", \(event\) => event\.preventDefault\(\)/);
+    assert.match(section, /STRETCH_ACTIONS\.has/);
+    assert.match(html, /data\.stretch/);
+  });
+});

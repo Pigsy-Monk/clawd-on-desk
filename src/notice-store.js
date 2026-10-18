@@ -225,8 +225,13 @@ function createNoticeStore(options = {}) {
   let expiryTimer = null;
   let nextId = 1;
   let disposed = false;
+  // While paused (a stretch break is on screen and new cards wait for it)
+  // nothing expires; resumeExpiry() gives every card back the time it spent
+  // waiting, so a card pushed mid-break still gets its whole TTL afterwards.
+  let pausedAt = null;
 
   function pruneExpired(at) {
+    if (pausedAt !== null) return false;
     const before = notices.length;
     notices = notices.filter((notice) => notice.expiresAt > at);
     return notices.length !== before;
@@ -237,7 +242,7 @@ function createNoticeStore(options = {}) {
       clearTimer(expiryTimer);
       expiryTimer = null;
     }
-    if (disposed || notices.length === 0) return;
+    if (disposed || notices.length === 0 || pausedAt !== null) return;
     // One timer aimed at the earliest deadline; on fire it prunes everything
     // due and re-arms. Avoids a timer per notice.
     const earliest = Math.min(...notices.map((notice) => notice.expiresAt));
@@ -390,6 +395,31 @@ function createNoticeStore(options = {}) {
     return removed;
   }
 
+  function pauseExpiry() {
+    if (disposed || pausedAt !== null) return false;
+    pruneExpired(now());
+    pausedAt = now();
+    scheduleExpiry();
+    return true;
+  }
+
+  // Each card's deadline moves by the time it spent waiting: since the pause
+  // for a card that was already up, since its own push for one that arrived
+  // during the pause. Ids and createdAt stay, so nothing re-renders.
+  function resumeExpiry() {
+    if (disposed || pausedAt === null) return false;
+    const at = now();
+    const since = pausedAt;
+    pausedAt = null;
+    notices = notices.map((notice) => {
+      const pushedAt = notice.expiresAt - notice.ttl;
+      const waited = Math.max(0, at - Math.max(since, pushedAt));
+      return waited > 0 ? Object.freeze({ ...notice, expiresAt: notice.expiresAt + waited }) : notice;
+    });
+    scheduleExpiry();
+    return true;
+  }
+
   function subscribe(listener) {
     if (typeof listener !== "function" || disposed) return () => {};
     listeners.add(listener);
@@ -406,7 +436,19 @@ function createNoticeStore(options = {}) {
     notices = [];
   }
 
-  return { add, remove, removeByKey, clear, list, subscribe, dispose, maxNotices };
+  return {
+    add,
+    remove,
+    removeByKey,
+    clear,
+    list,
+    subscribe,
+    pauseExpiry,
+    resumeExpiry,
+    isExpiryPaused: () => pausedAt !== null,
+    dispose,
+    maxNotices,
+  };
 }
 
 module.exports = {

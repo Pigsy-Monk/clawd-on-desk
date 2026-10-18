@@ -342,6 +342,20 @@ Mini 状态映射：
 - 浮层窗口（通知卡片、大图）的页面就绪改为跟踪 `did-start-loading` / `did-finish-load`：Electron 在派发 `did-finish-load` 时 `isLoading()` 仍为 true，旧逻辑在这个时刻判定“还在加载”而不显示窗口，导致启动后第一张卡片的窗口一直隐藏（隐藏窗口的动画帧约 1 帧/秒）
 - 渲染窗口的 theme config 走 `--theme-config` 命令行参数；Windows 整条进程命令行上限 32767 字符，所以 `buildRendererThemeConfig` 只在 `accessorySlots` 里各带一份 head / mouth attachment map，不再在顶层重复
 
+### Stretch Breaks（拉伸跟练）
+
+宠物自己计时，到点**邀请**用户跟着卡片上的豆豆人做一组拉伸（目前只开 B 组「腰背舒展」，6 个动作约 2 分钟），取代原来外部计划任务推的「起来动一动」通知。
+
+- **模块**：`src/stretch-session.js`（动作数据、时间线、session 引擎、卡片 view model；A 肩颈 / C 手腕脚踝已写成同一结构，`ENABLED_GROUP_IDS` 加 id 并补英文即可启用）、`src/stretch-scheduler.js`（纯逻辑：间隔、时段、离开、顺延、稍后 / 今天跳过）、`src/stretch-runtime.js`（main 里的唯一 owner：阶段 `idle → sign → invite → run → finish`，窗口相关全部注入）。动作关键帧走 `notice-pose.js` 归一化；角度按右侧写，左侧由代码镜像
+- **偏好**：`stretchReminderEnabled`（默认开）、`stretchReminderIntervalMinutes`（默认 60，15–240）、`stretchReminderStartHour` / `EndHour`（默认 9 / 19；结束 24 = 午夜，开始 ≥ 结束视为跨午夜）、`stretchReminderWorkdaysOnly`（默认开）。设置 → 通用 → 提醒与反馈 →「拉伸跟练提醒」，开关行带「现在试一下」（命令 `stretch.tryNow`，不写偏好）
+- **计时**：runtime 每 30 秒 `evaluate()` 一次。系统空闲（`powerMonitor.getSystemIdleTime`，键盘和鼠标都算）≥ 10 分钟算离开：丢掉这次邀请，回来后重新计一个完整间隔；两次评估之间隔了 5 分钟以上（睡眠 / 休眠）同样处理。出了时段清空倒计时，进时段后从头计。到点时 DND、mini（含过渡）、有待处理的权限请求、宠物隐藏、全屏前台、已有通知在举牌时 **defer**，下个 30 秒再试，不丢
+- **邀请**：主题有 `notice-screen` reaction 且 `canPlay` 时，复用举牌：payload 带 `dwellMs: 30000`（renderer 的固定停留，悬停照样暂停），id 前缀 `stretch-invite-`，没有关联 notice。左键点黑板 → runtime 打开邀请卡片（开始 / 10 分钟后 / 今天跳过，× = 10 分钟后）并让 renderer 收牌（`notice-screen-lower`）；右键黑板 → `notice-screen-runtime` 的 `onBoardContextMenu` 认领，弹同样三项的原生菜单，**不复制**（普通通知的牌子右键仍是复制）；30 秒不理（`dwell`）= 稍后。牌子被新通知接手（`replaced`）或被打断（权限请求、DND、拖拽、其他视觉提交）时不弹卡片，2 分钟后再邀请。主题没有黑板或举牌投递失败时直接弹邀请卡片
+- **跟练**：卡片不是 store 里的 notice，而是 `notice-bubble.js` 的单独槽位 `setStretchCard()`，随 `notice-bubble-show` 的 `stretch` 字段下发，排在卡片栈最靠近宠物的位置，没有 TTL、不进通知历史、不能复制。main 在每个段落切换和暂停 / 继续时发一份新 payload（带 `seq`），页面只在 `seq` 变化时重同步时钟、两次之间自己按 rAF 插值；黑板上有动作名、左右侧标记、倒计时环、吸气 / 呼气圆点、「2 / 6」、跟着手脚走的粉笔记号和居中提示（下一个 / 换边 / 暂停中）。按钮：暂停 / 继续、跳过这个、结束（× = 结束），按钮只把白名单 action 名经 `notice-bubble-stretch-action` 发回 main。跳过在动作里会跳掉整个动作（两侧），跳过最后一个动作算提前结束。做完显示「做完啦！」（6 秒后收），提前结束显示「先到这儿 · 做了 x / n 个」（4 秒后收）。「轻轻后仰」的提示保留「腰不舒服就跳过这个」。减少动态时豆豆人定格、倒计时照走
+- **和通知的冲突**：开始跟练就收牌，宠物空出手。`run` / `finish` 期间（runtime `isBusy()`）新通知一律 held（不举牌、不出卡片），store 的过期暂停（`pauseExpiry` / `resumeExpiry`，恢复时每张卡补回等待的时间）；跟练卡片收起后最新那条按普通流程举牌，pose 卡片直接显示。跟练中右键宠物，原菜单最上面加「暂停 / 继续、跳过这个动作、结束跟练」
+- **测试入口**：除了设置里的按钮，`POST /stretch/try`（`Content-Type: application/json`，无 body，走本机 hook 传输检查，带 Origin 的浏览器请求 403，Remote SSH ingress 404）返回 `{ status, phase }`
+- **文案**：卡片内容（动作名、口令、提示、按钮）只写了中文和英文，`zh` / `zh-TW` 用中文，其余语言用英文；设置项和右键菜单 7 种语言齐全
+- **未做**：像素 Clawd 跟着豆豆举手 / 歪身（demo 里的 `petMimic`，主题没有对应素材）
+
 ## Electron And Platform Notes
 
 - `win.setFocusable(false)`：渲染窗口永不抢焦点

@@ -52,7 +52,7 @@ const {
 } = require("./server-route-permission");
 const { createRemoteSshIngress } = require("./remote-ssh-ingress");
 const { handleQuestionPost } = require("./server-route-question");
-const { handleNoticePost, handleNoticeDelete } = require("./server-route-notice");
+const { handleNoticePost, handleNoticeDelete, handleStretchTryPost } = require("./server-route-notice");
 const {
   getCodexOfficialTurnKey,
   resolveCodexOfficialHookState,
@@ -1015,6 +1015,12 @@ function routeHttpRequest(req, res, remoteProfile = null) {
     } else if (req.method === "DELETE" && req.url === "/notice") {
       if (!remoteProfile && rejectUnsafeLocalHookRequest(req, res, "/notice")) return;
       handleNoticeDelete(req, res, { noticeStore: ctx.noticeStore, debugLog: ctx.debugLog });
+    } else if (req.method === "POST" && req.url === "/stretch/try") {
+      // Same as Settings "Try it now" (stretch breaks): the invite at once.
+      // Local only: a Remote SSH tunnel has no business popping a break.
+      if (remoteProfile) { res.writeHead(404); res.end(); return; }
+      if (rejectUnsafeLocalHookRequest(req, res, "/stretch/try")) return;
+      handleStretchTryPost(req, res, { tryStretchNow: ctx.tryStretchNow });
     } else {
       res.writeHead(404);
       res.end();

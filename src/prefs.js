@@ -323,6 +323,28 @@ const SCHEMA = {
   // agent talking to them, and once dismissed its text is otherwise gone.
   // Off only stops new recording; clearing is an explicit Dashboard action.
   noticeHistoryEnabled: { type: "boolean", default: true },
+  // Stretch breaks: the pet holds up "Time to stretch?" every interval of
+  // presence inside the active hours and runs a short follow-along with the
+  // bean figure (src/stretch-runtime.js). Default ON: it replaces the old
+  // external "get up and move" reminder, and it is only an invitation.
+  // End hour 24 is midnight; a start at or after the end wraps past midnight.
+  stretchReminderEnabled: { type: "boolean", default: true },
+  stretchReminderIntervalMinutes: {
+    type: "number",
+    default: 60,
+    validate: (v) => Number.isInteger(v) && v >= 15 && v <= 240,
+  },
+  stretchReminderStartHour: {
+    type: "number",
+    default: 9,
+    validate: (v) => Number.isInteger(v) && v >= 0 && v <= 23,
+  },
+  stretchReminderEndHour: {
+    type: "number",
+    default: 19,
+    validate: (v) => Number.isInteger(v) && v >= 1 && v <= 24,
+  },
+  stretchReminderWorkdaysOnly: { type: "boolean", default: true },
   lowPowerIdleMode: { type: "boolean", default: false },
   // Keep the pet animated when the OS asks apps for reduced motion (Windows
   // "Show animations" off, macOS "Reduce motion"). Default OFF: the system

@@ -13,7 +13,9 @@
 //     cut short rather than shown in full asks for it too (onPoseInterrupted);
 //   - the clipboard: a right-click on the board copies the notice's text,
 //     resolved from the snapshot taken when the pose began (never from a
-//     renderer-supplied string), so it still works if the card expired;
+//     renderer-supplied string), so it still works if the card expired —
+//     unless onBoardContextMenu claims it (the stretch invite's sign has
+//     nothing to copy and opens its own menu instead);
 //   - the hit window's gate: it is told while the pose is up, so it forwards
 //     pointer moves and keeps click reactions from replacing the pose.
 
@@ -59,6 +61,12 @@ function createNoticeScreenRuntime(options = {}) {
   const writeClipboard = options.writeClipboard || (() => {});
   const onSignClick = options.onSignClick || (() => {});
   const onPoseInterrupted = options.onPoseInterrupted || (() => {});
+  // Every ending, with the notice id and why: "dwell", "replaced", "cancel"
+  // or "visual" (another visual took the pet over). Called before
+  // onPoseInterrupted.
+  const onPoseEnded = options.onPoseEnded || (() => {});
+  // Right-click on the board: return true to take it instead of copying.
+  const onBoardContextMenu = options.onBoardContextMenu || (() => false);
   const now = options.now || (() => Date.now());
 
   // The pose main asked for: which notice, which file. Set on begin(), cleared
@@ -120,7 +128,11 @@ function createNoticeScreenRuntime(options = {}) {
       const wasCurrent = !!(pending && pending.id === id);
       if (wasCurrent) pending = null;
       syncHitWindow();
-      if (wasCurrent && !KEEP_HELD_REASONS.has(status.reason)) onPoseInterrupted();
+      if (wasCurrent) {
+        const reason = KEEP_HELD_REASONS.has(status.reason) ? status.reason : "cancel";
+        try { onPoseEnded(id, reason); } catch {}
+        if (!KEEP_HELD_REASONS.has(reason)) onPoseInterrupted(id);
+      }
       return true;
     }
     const rect = normalizeRect(status.rect);
@@ -139,10 +151,12 @@ function createNoticeScreenRuntime(options = {}) {
       return;
     }
     if (reported) {
+      const id = pending.id;
       pending = null;
       reported = null;
       syncHitWindow();
-      onPoseInterrupted();
+      try { onPoseEnded(id, "visual"); } catch {}
+      onPoseInterrupted(id);
       return;
     }
     syncHitWindow();
@@ -211,6 +225,13 @@ function createNoticeScreenRuntime(options = {}) {
     const input = point && typeof point === "object" ? point : {};
     const viewBoxPoint = toViewBoxPoint(input.clientX, input.clientY);
     if (!viewBoxPoint || !pointInRect(viewBoxPoint, reported.rect)) return false;
+    let claimed = false;
+    try {
+      claimed = onBoardContextMenu(pending.id) === true;
+    } catch {
+      claimed = false;
+    }
+    if (claimed) return true;
     const text = noticeCopyText(pending.notice);
     if (!text) return false;
     try {

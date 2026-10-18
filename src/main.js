@@ -205,6 +205,7 @@ const { getRightSideMirrorFiles, isVisualMirrored, resolveMirroredFile } = requi
 const { createTestReactionHandler } = require("./test-reaction");
 const { createNoticeReactionHandler } = require("./notice-reaction");
 const { createNoticeScreenRuntime, registerNoticeScreenIpc } = require("./notice-screen-runtime");
+const { createStretchRuntime } = require("./stretch-runtime");
 const createMacHideController = require("./mac-hide");
 const {
   getFocusableLocalHudSessionIds: selectFocusableLocalHudSessionIds,
@@ -614,6 +615,9 @@ const _settingsController = createSettingsController({
     getSlackNotifyStatus: () => getSlackNotifyStatus(),
     getSlackNotifySecretInfo: () => getSlackNotifySecretInfo(),
     sendSlackNotifyTest: () => sendSlackNotifyTest(),
+    // Settings "Try it now": the stretch invite at once. Lazy, the runtime is
+    // created further down.
+    tryStretchNow: () => (stretchRuntime ? stretchRuntime.tryNow() : { status: "error", message: "stretch runtime unavailable" }),
     // Lazy getter so settings-actions can use the controller even though it's
     // instantiated below (forward-reference).
     get telegramMigration() {
@@ -2321,6 +2325,16 @@ const {
 // for the server ctx below and for the bubble's store subscription.
 const noticeStore = createNoticeStore();
 
+// Stretch breaks (src/stretch-runtime.js). Created with the notice reactions
+// further down; everything that reaches it before then sees null.
+let stretchRuntime = null;
+function stretchOwnsSign(id) {
+  return !!(stretchRuntime && stretchRuntime.ownsSignId(id));
+}
+function isStretchBusy() {
+  return !!(stretchRuntime && stretchRuntime.isBusy());
+}
+
 // The notice head screen (clawd's "notice-screen" reaction): main's half is
 // input forwarding, the copy-on-right-click and the hit window's gate. Its
 // dependencies are read lazily, so it can exist before the windows do.
@@ -2339,8 +2353,26 @@ const noticeScreenRuntime = createNoticeScreenRuntime({
   sendToHitWin: (channel, payload) => sendToHitWin(channel, payload),
   writeClipboard: (text) => clipboard.writeText(text),
   // _noticeBubble is created further down; both fire only after startup.
-  onSignClick: () => _noticeBubble.revealHeldNotices(),
-  onPoseInterrupted: () => _noticeBubble.revealHeldNotices(),
+  // The stretch invite's sign opens its own card and its own menu.
+  onSignClick: (id) => {
+    if (stretchOwnsSign(id)) {
+      stretchRuntime.handleSignClick(id);
+      return;
+    }
+    _noticeBubble.revealHeldNotices();
+  },
+  onPoseEnded: (id, reason) => {
+    if (stretchOwnsSign(id)) stretchRuntime.handleSignEnded(id, reason);
+  },
+  onPoseInterrupted: (id) => {
+    if (stretchOwnsSign(id)) return;
+    _noticeBubble.revealHeldNotices();
+  },
+  onBoardContextMenu: (id) => {
+    if (!stretchOwnsSign(id)) return false;
+    _menu.showStretchMenu({ onBoard: true });
+    return true;
+  },
 });
 
 // Local notice history (~/.clawd/notice-history-v1) for the Dashboard's
@@ -2360,7 +2392,10 @@ const _noticeBubbleCtx = {
   // Option chosen with the user: while the pet holds a new notice up on its
   // sign the card stays back; clicking the board opens it. handleNoticeReaction
   // is defined further down and only consulted once notices arrive.
-  shouldHoldNewNotices: (fresh) => !fresh.some(isPoseNotice) && canShowNoticeSign(),
+  // During a stretch break every new card waits (no sign, no card) until the
+  // break's card is gone; the store's expiry is paused meanwhile.
+  shouldHoldNewNotices: (fresh) => isStretchBusy() || (!fresh.some(isPoseNotice) && canShowNoticeSign()),
+  onStretchAction: (action) => !!(stretchRuntime && stretchRuntime.handleAction(action)),
   get win() { return win; },
   // Deliberate: the notice stack is the pet "speaking", so it always follows
   // the pet. It ignores the global bubble-follow prefs (bubbleFollowPet
@@ -3270,6 +3305,8 @@ const _serverCtx = {
   get hideBubbles() { return getAllBubblesHidden(); },
   getBubblePolicy: getRuntimeBubblePolicy,
   noticeStore,
+  // POST /stretch/try (local only): the stretch invite at once, for testing.
+  tryStretchNow: () => (stretchRuntime ? stretchRuntime.tryNow() : { status: "error", message: "stretch runtime unavailable" }),
   get pendingPermissions() { return pendingPermissions; },
   get PASSTHROUGH_TOOLS() { return PASSTHROUGH_TOOLS; },
   get STATE_SVGS() { return _state.STATE_SVGS; },
@@ -4981,6 +5018,8 @@ const _menuCtx = {
   ensureUserThemesDir: () => themeLoader.ensureUserThemesDir(),
   openSettingsWindow: (options) => settingsWindowRuntime.open(options),
   showTutorial: () => _tutorial.open(),
+  getStretchMenuActions: (options) => (stretchRuntime ? stretchRuntime.menuActions(options) : []),
+  runStretchAction: (action) => { if (stretchRuntime) stretchRuntime.handleAction(action); },
 };
 const _menu = require("./menu")(_menuCtx);
 const { t, buildContextMenu, buildTrayMenu, rebuildAllMenus, createTray,
@@ -5989,14 +6028,92 @@ noticeStore.subscribe((snapshot) => {
     if (!newest || notice.createdAt >= newest.createdAt) newest = notice;
   }
   lastNoticeIds = ids;
-  if (!newest || isPoseNotice(newest)) return;
+  if (!newest) return;
+  // A stretch break is on: the card waits with the others and the newest one
+  // gets its sign once the break's card is gone (flushNoticesAfterStretch).
+  if (isStretchBusy()) {
+    noticeWaitingForStretch = newest.id;
+    return;
+  }
+  if (isPoseNotice(newest)) return;
+  reactToNewestNotice(newest);
+});
+
+function reactToNewestNotice(newest) {
+  // A notice takes the sign from a stretch invite that is still only on it;
+  // the invite asks again a little later.
+  if (stretchRuntime && stretchRuntime.getPhase() === "sign" && canShowNoticeSign()) {
+    stretchRuntime.handleSignEnded(stretchRuntime.getSignId(), "replaced");
+  }
   // The whole notice: the handler takes level, id and headline from it, and
   // the sign keeps it for copy-on-right-click.
   handleNoticeReaction(newest);
   // The bubble held the new cards for the sign; if the sign is not showing
   // this notice after all (another theme, a gate, delivery failed), show them.
   if (noticeScreenRuntime.getPendingId() !== newest.id) _noticeBubble.revealHeldNotices();
+}
+
+let noticeWaitingForStretch = null;
+function flushNoticesAfterStretch() {
+  noticeStore.resumeExpiry();
+  const waitingId = noticeWaitingForStretch;
+  noticeWaitingForStretch = null;
+  const newest = waitingId ? noticeStore.list().find((n) => n && n.id === waitingId) : null;
+  if (!newest || isPoseNotice(newest)) {
+    _noticeBubble.revealHeldNotices();
+    return;
+  }
+  reactToNewestNotice(newest);
+}
+
+// ── Stretch breaks ──
+// The pet invites the user to a short follow-along stretch on its own clock
+// (prefs stretchReminder*). Away (system idle 10 min), DND, fullscreen, mini
+// mode, a pending permission request or a notice already on the sign make it
+// wait. See src/stretch-runtime.js and docs/project/theme-state-ui.md.
+stretchRuntime = createStretchRuntime({
+  getConfig: () => ({
+    enabled: _settingsController.get("stretchReminderEnabled") === true,
+    intervalMinutes: _settingsController.get("stretchReminderIntervalMinutes"),
+    startHour: _settingsController.get("stretchReminderStartHour"),
+    endHour: _settingsController.get("stretchReminderEndHour"),
+    workdaysOnly: _settingsController.get("stretchReminderWorkdaysOnly") !== false,
+  }),
+  getLang: () => lang,
+  getSystemIdleMs: () => (typeof powerMonitor.getSystemIdleTime === "function" ? powerMonitor.getSystemIdleTime() * 1000 : 0),
+  getBlockers: () => {
+    const blockers = [];
+    if (doNotDisturb) blockers.push("dnd");
+    if (_mini.getMiniMode() || _mini.getMiniTransitioning()) blockers.push("mini");
+    if (pendingPermissions.length > 0) blockers.push("permission");
+    if (petWindowRuntime.isPetEffectivelyHidden()) blockers.push("hidden");
+    try { if (_isForegroundFullscreen()) blockers.push("fullscreen"); } catch {}
+    if (noticeScreenRuntime.getPendingId()) blockers.push("notice-sign");
+    if (!win || win.isDestroyed()) blockers.push("no-window");
+    return blockers;
+  },
+  canShowSign: () => canShowNoticeSign(),
+  raiseSign: (sign) => requestNoticeScreenReaction(
+    { level: sign.level, id: sign.id, title: sign.title, dwellMs: sign.dwellMs },
+    null
+  ),
+  lowerSign: (id) => sendRawToRenderer("notice-screen-lower", { id }),
+  showCard: (card) => _noticeBubble.setStretchCard(card),
+  onBusyChange: (busy) => {
+    if (busy) noticeStore.pauseExpiry();
+    else flushNoticesAfterStretch();
+  },
+  log: (message) => console.warn(`Clawd: ${message}`),
 });
+for (const key of [
+  "stretchReminderEnabled",
+  "stretchReminderIntervalMinutes",
+  "stretchReminderStartHour",
+  "stretchReminderEndHour",
+  "stretchReminderWorkdaysOnly",
+]) {
+  _settingsController.subscribeKey(key, () => stretchRuntime.handleConfigChanged());
+}
 const { enterMiniMode, exitMiniMode, enterMiniViaMenu, miniPeekIn, miniPeekOut,
         checkMiniModeSnap, cancelMiniTransition, animateWindowX, animateWindowParabola } = _mini;
 
@@ -6326,6 +6443,8 @@ if (!gotTheLock) {
     // swallows its own failures, the catch is only a backstop.
     try { noticeHistory.start(); }
     catch (err) { console.warn("Clawd: notice history startup failed:", err && err.message); }
+    try { stretchRuntime.startTicking(); }
+    catch (err) { console.warn("Clawd: stretch reminder startup failed:", err && err.message); }
     // Reconcile the local quota binding only after the app has visible UI.
     // initialize() reads opaque credential metadata but never decrypts the key
     // or performs a network request, so ordinary startup cannot be held behind
@@ -6483,6 +6602,7 @@ if (!gotTheLock) {
     _server.cleanup();
     if (_lanWss) _lanWss.cleanup();
     _updateBubble.cleanup();
+    try { stretchRuntime.dispose(); } catch {}
     _noticeBubble.cleanup();
     _noticeChart.cleanup();
     // Before the store goes: writes each on-screen card's final version.

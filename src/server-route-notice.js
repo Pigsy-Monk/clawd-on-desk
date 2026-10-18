@@ -209,7 +209,29 @@ function handleNoticeDelete(req, res, options) {
   });
 }
 
+// POST /stretch/try — the same as Settings "Try it now" for stretch breaks:
+// the pet raises its stretch invite at once instead of waiting for the
+// interval. Takes no body; the answer is the runtime's own
+// { status, phase[, alreadyActive] }. server.js only routes it for local
+// (non-Remote-SSH) requests that pass the hook transport checks.
+function handleStretchTryPost(req, res, options = {}) {
+  if (req && typeof req.resume === "function") req.resume();
+  let result = { status: "error", message: "stretch breaks unavailable" };
+  try {
+    if (typeof options.tryStretchNow === "function") result = options.tryStretchNow() || result;
+  } catch (err) {
+    result = { status: "error", message: err && err.message ? err.message : "failed" };
+  }
+  const ok = result && result.status === "ok";
+  res.writeHead(ok ? 200 : 503, {
+    "Content-Type": "application/json",
+    [CLAWD_SERVER_HEADER]: CLAWD_SERVER_ID,
+  });
+  res.end(JSON.stringify(result));
+}
+
 module.exports = {
+  handleStretchTryPost,
   MAX_NOTICE_BODY_BYTES,
   handleNoticePost,
   handleNoticeDelete,

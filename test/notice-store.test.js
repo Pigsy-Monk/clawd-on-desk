@@ -712,3 +712,38 @@ describe("notice store — removal", () => {
     assert.strictEqual(store.clear(), 0);
   });
 });
+
+describe("notice store — expiry paused during a stretch break", () => {
+  it("keeps every card past its TTL while paused and gives back the wait", () => {
+    const clock = makeClock();
+    const store = makeTimedStore(clock);
+    const before = store.add({ title: "before", ttl: 10_000 }).notice;
+    clock.advance(4_000);
+    assert.strictEqual(store.pauseExpiry(), true);
+    assert.strictEqual(store.isExpiryPaused(), true);
+    clock.advance(30_000);
+    const during = store.add({ title: "during", ttl: 10_000 }).notice;
+    clock.advance(60_000);
+    assert.deepStrictEqual(store.list().map((n) => n.title), ["before", "during"]);
+    assert.strictEqual(store.resumeExpiry(), true);
+    const [b, d] = store.list();
+    // "before" had 6 s left at the pause, "during" its whole 10 s.
+    assert.strictEqual(b.expiresAt - clock.now(), 6_000);
+    assert.strictEqual(d.expiresAt - clock.now(), 10_000);
+    assert.strictEqual(b.id, before.id);
+    assert.strictEqual(d.id, during.id);
+    clock.advance(6_001);
+    assert.deepStrictEqual(store.list().map((n) => n.title), ["during"]);
+    clock.advance(4_000);
+    assert.deepStrictEqual(store.list(), []);
+  });
+
+  it("pause and resume are idempotent", () => {
+    const store = makeTimedStore(makeClock());
+    assert.strictEqual(store.resumeExpiry(), false);
+    assert.strictEqual(store.pauseExpiry(), true);
+    assert.strictEqual(store.pauseExpiry(), false);
+    assert.strictEqual(store.resumeExpiry(), true);
+    assert.strictEqual(store.isExpiryPaused(), false);
+  });
+});

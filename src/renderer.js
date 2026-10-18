@@ -1371,6 +1371,11 @@ function playNoticeScreen(payload, visualRequest) {
     accumulatedMs: 0,
     runningSince: Date.now(),
     dwellMs: noticeLayout.DWELL_FIT_MS,
+    // A fixed dwell (the stretch invite's 30 s) instead of one fitted to the
+    // line; hovering still pauses it.
+    fixedDwellMs: Number.isFinite(payload.dwellMs) && payload.dwellMs > 0
+      ? Math.min(120000, payload.dwellMs)
+      : null,
     dwellTimer: null,
     plan: noticeLayout.buildMarqueePlan(0),
     offset: 0,
@@ -1428,6 +1433,7 @@ function playNoticeScreen(payload, visualRequest) {
   // The pose holds even if its document never becomes scriptable (image
   // fallback): a fixed dwell runs from the start, replaced once the line has
   // been measured.
+  if (pose.fixedDwellMs) pose.dwellMs = pose.fixedDwellMs;
   scheduleNoticeScreenDwell(pose);
   reportNoticeScreenStatus(pose);
   return true;
@@ -1648,7 +1654,7 @@ function layoutNoticeScreenLine(pose) {
   const line = noticeLayout.layoutLine(promptWidth, titleWidth);
   pose.titleEl.setAttribute("x", String(line.titleX));
   pose.plan = noticeLayout.buildMarqueePlan(line.overflow);
-  pose.dwellMs = noticeLayout.computeDwellMs(pose.plan);
+  pose.dwellMs = pose.fixedDwellMs || noticeLayout.computeDwellMs(pose.plan);
   applyNoticeScreenOffset(pose, true);
   if (pose.runningSince !== null) scheduleNoticeScreenDwell(pose);
 }
@@ -1926,6 +1932,16 @@ if (window.electronAPI && typeof window.electronAPI.onNoticeScreenPointer === "f
 }
 if (window.electronAPI && typeof window.electronAPI.onNoticeScreenCopied === "function") {
   window.electronAPI.onNoticeScreenCopied(handleNoticeScreenCopied);
+}
+// Main takes a sign down early (the stretch invite was answered or opened):
+// ends that pose the way a finished dwell does and hands the pet back.
+if (window.electronAPI && typeof window.electronAPI.onNoticeScreenLower === "function") {
+  window.electronAPI.onNoticeScreenLower((info) => {
+    const pose = noticeScreenPose;
+    if (!pose || (info && info.id && info.id !== pose.id)) return;
+    endNoticeScreenPose("dwell");
+    endReaction();
+  });
 }
 
 // Release an <object> SVG element: navigate away to unload the SVG document

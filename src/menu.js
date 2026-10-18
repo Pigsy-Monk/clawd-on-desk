@@ -485,6 +485,44 @@ module.exports = function initMenu(ctx) {
     ctx.flushRuntimeStateToPrefs();
   }
 
+  // Stretch break actions as menu items: ctx.getStretchMenuActions() returns
+  // action ids (src/stretch-runtime.js menuActions), this file owns the labels.
+  const STRETCH_MENU_LABELS = {
+    start: "stretchMenuStart",
+    later: "stretchMenuLater",
+    skipToday: "stretchMenuSkipToday",
+    pause: "stretchMenuPause",
+    resume: "stretchMenuResume",
+    skip: "stretchMenuSkip",
+    end: "stretchMenuEnd",
+  };
+  function buildStretchMenuItems(options = {}) {
+    if (typeof ctx.getStretchMenuActions !== "function") return [];
+    let actions = [];
+    try {
+      actions = ctx.getStretchMenuActions(options) || [];
+    } catch {
+      actions = [];
+    }
+    return actions
+      .filter((action) => STRETCH_MENU_LABELS[action])
+      .map((action) => ({
+        label: t(STRETCH_MENU_LABELS[action]),
+        click: () => {
+          if (typeof ctx.runStretchAction === "function") ctx.runStretchAction(action);
+        },
+      }));
+  }
+
+  // Right-click on the stretch invite's sign: only the three choices.
+  function showStretchMenu(options = {}) {
+    if (!ctx.win || ctx.win.isDestroyed()) return false;
+    const items = buildStretchMenuItems(options);
+    if (!items.length) return false;
+    popupMenuAt(Menu.buildFromTemplate(items));
+    return true;
+  }
+
   function buildContextMenu() {
     // Grouped as state / work / display / app / quit and joined with a single
     // separator between non-empty groups (see joinGroups). This replaced a flat
@@ -578,7 +616,11 @@ module.exports = function initMenu(ctx) {
       { label: t("quit"), click: () => requestAppQuit() },
     ];
 
-    const template = joinGroups([stateGroup, workGroup, displayGroup, appGroup, quitGroup]);
+    // While a stretch break is on, its controls lead the menu (Pause / Skip /
+    // End); otherwise this group is empty and joinGroups drops it.
+    const stretchGroup = buildStretchMenuItems();
+
+    const template = joinGroups([stretchGroup, stateGroup, workGroup, displayGroup, appGroup, quitGroup]);
     ctx.contextMenu = Menu.buildFromTemplate(template);
   }
 
@@ -632,6 +674,7 @@ module.exports = function initMenu(ctx) {
     ensureContextMenuOwner,
     popupMenuAt,
     showPetContextMenu,
+    showStretchMenu,
     resizeWindow,
     requestAppQuit,
   };
