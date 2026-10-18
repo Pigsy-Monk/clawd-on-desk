@@ -36,6 +36,8 @@ const WRAP_CHARS = 40;
 const TREND_SERIES_ROW_HEIGHT = 30;
 // An image notice's thumbnail on a text card: its CSS max-height plus margin.
 const IMAGE_THUMB_HEIGHT = 130;
+// A pose card's chalkboard stage (notice-bubble.html .pose-stage) plus margin.
+const POSE_STAGE_HEIGHT = 220;
 
 // The renderer's own presentation hints, validated here so a ctx that returns
 // nothing (or nonsense) is normalized once instead of in the page.
@@ -117,6 +119,8 @@ function estimateNoticeStackHeight(notices) {
       if (notice.kind === "trend") {
         const series = Array.isArray(notice.series) ? notice.series : [];
         height += series.length * TREND_SERIES_ROW_HEIGHT;
+      } else if (notice.kind === "pose") {
+        height += wrappedExtraLines(notice.body) * TEXT_LINE_HEIGHT + POSE_STAGE_HEIGHT;
       } else {
         height += wrappedExtraLines(notice.body) * TEXT_LINE_HEIGHT;
         if (notice.image && typeof notice.image.data === "string" && notice.image.data) {

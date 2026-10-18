@@ -32,6 +32,8 @@
 // draws `series` straight into a sparkline, so a blob that merely claims to be a
 // PNG or a series that is not a list of finite numbers must never get through.
 
+const { normalizePose } = require("./notice-pose");
+
 const DEFAULT_MAX_NOTICES = 20;
 const DEFAULT_TTL_MS = 60_000;
 const MIN_TTL_MS = 1_000;
@@ -46,6 +48,9 @@ const DEFAULT_LEVEL = "info";
 
 const DEFAULT_KIND = "text";
 const TREND_KIND = "trend";
+// A card with a little figure acting something out (`pose`, see
+// src/notice-pose.js). Like a trend card, the data decides the kind.
+const POSE_KIND = "pose";
 // A sparkline needs a handful of series, not a wall of them, and only the
 // recent tail of a series is worth drawing. Both caps keep a pusher from
 // handing the renderer an unbounded amount of work per card.
@@ -274,13 +279,14 @@ function createNoticeStore(options = {}) {
     // for, instead of a text card with the data silently unused. And a declared
     // chart card with nothing to draw degrades to text, so the renderer is never
     // handed a sparkline with no points behind it.
+    const pose = series.length > 0 ? null : normalizePose(raw.pose);
     const kind = series.length > 0
       ? TREND_KIND
-      : (declared === TREND_KIND ? DEFAULT_KIND : declared);
-    // A card with no line, no chart and no picture has nothing to say; refuse
-    // rather than render an empty box. A chart-only or image-only card is a
-    // legitimate notice, so series and image count as content too.
-    if (!title && !body && series.length === 0 && !image) return null;
+      : (pose ? POSE_KIND : (declared === TREND_KIND ? DEFAULT_KIND : declared));
+    // A card with no line, no chart, no picture and no figure has nothing to
+    // say; refuse rather than render an empty box. A chart-only, image-only or
+    // figure-only card is a legitimate notice, so those count as content too.
+    if (!title && !body && series.length === 0 && !image && !pose) return null;
 
     const level = normalizeLevel(raw.level);
     const ttl = normalizeTtl(raw.ttl, level);
@@ -295,6 +301,7 @@ function createNoticeStore(options = {}) {
       kind,
       series: Object.freeze(series),
       image,
+      pose,
       ttl,
       expiresAt: at + ttl,
     };
@@ -416,6 +423,7 @@ module.exports = {
   LEVEL_TTL_MS,
   DEFAULT_KIND,
   TREND_KIND,
+  POSE_KIND,
   MAX_SERIES,
   MAX_SERIES_POINTS,
   MAX_SERIES_NAME_LENGTH,

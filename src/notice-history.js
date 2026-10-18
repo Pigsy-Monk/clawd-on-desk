@@ -41,6 +41,7 @@ const {
   DEFAULT_LEVEL,
   DEFAULT_KIND,
   TREND_KIND,
+  POSE_KIND,
   MAX_TITLE_LENGTH,
   MAX_BODY_LENGTH,
   MAX_KEY_LENGTH,
@@ -80,7 +81,8 @@ const WARN_THROTTLE_MS = 10 * 60 * 1000;
 const TEMP_FILE_TTL_MS = 24 * 60 * 60 * 1000;
 
 const LEVEL_SET = new Set(LEVELS);
-const KIND_SET = new Set([DEFAULT_KIND, TREND_KIND]);
+// A pose card is kept as its title and body; the animation itself is not.
+const KIND_SET = new Set([DEFAULT_KIND, TREND_KIND, POSE_KIND]);
 const DAY_FILE_RE = /^(\d{4})-(\d{2})-(\d{2})\.jsonl$/;
 const TEMP_FILE_RE = /^\.\d{4}-\d{2}-\d{2}\.jsonl\.\d+\.[0-9a-f]+\.tmp$/;
 // `<run id>:<store notice id>`. The store's ids are `notice-<n>`; the pattern

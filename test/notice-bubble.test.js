@@ -182,6 +182,11 @@ describe("notice stack height estimate", () => {
     );
   });
 
+  it("makes room for a pose card's chalkboard", () => {
+    const text = estimateNoticeStackHeight([notice("n1")]);
+    assert.equal(estimateNoticeStackHeight([notice("n1", { kind: "pose", pose: { frames: [] } })]) - text, 220);
+  });
+
   it("survives a trend notice with no series list at all", () => {
     assert.equal(estimateNoticeStackHeight([notice("n1", { kind: "trend" })]), 150);
     assert.equal(estimateNoticeStackHeight([notice("n1", { kind: "trend", series: null })]), 150);
@@ -702,9 +707,31 @@ describe("notice-bubble.html", () => {
     assert.match(source, /notice\.kind === "trend" \|\| imageDataOf\(notice\)/);
     // The thumbnail's decoded size is reported, and a re-pushed picture redraws.
     assert.match(source, /img\.addEventListener\("load", reportHeight\);/);
-    assert.match(source, /imageFingerprint\(notice\),\n  \]\);/);
+    assert.match(source, /    imageFingerprint\(notice\),\n/);
     assert.match(css, /\.thumb \{[^}]*max-height: 120px;/);
     assert.match(css, /\.card\[data-expandable="true"\] \{ cursor: zoom-in; \}/);
+  });
+
+  it("draws a pose card's figure from numbers only, and replays it on click", () => {
+    const source = textOf(findAll(document, (node) => node.name === "script")[0]);
+    const css = textOf(findAll(document, (node) => node.name === "style")[0]);
+    // The figure is built node by node; no notice value reaches markup.
+    const engine = source.slice(source.indexOf("// ── Pose cards"), source.indexOf("// The card's text block"));
+    assert.ok(engine.length > 1000, "the pose engine is inline");
+    assert.doesNotMatch(engine, /innerHTML|insertAdjacentHTML|outerHTML/);
+    assert.match(engine, /document\.createElementNS\(SVG_NS, tag\)/);
+    // Only the store-normalized animation is used; the card checks its shape.
+    assert.match(source, /notice\.kind === "pose" && notice\.pose && Array\.isArray\(notice\.pose\.frames\)/);
+    // A click on a pose card replays; it never dismisses or expands it.
+    assert.match(source, /if \(card\.dataset\.pose === "true"\) replayPose\(card\);\n    else if \(card\.dataset\.expandable/);
+    // A re-pushed pose redraws, and reduced motion gets a still.
+    assert.match(source, /isPoseNotice\(notice\) \? notice\.pose : null,/);
+    // Reduced motion: a still until clicked, then one cycle.
+    assert.match(engine, /if \(!prefersReducedMotion\(\)\) return true;\n  return stage\.playUntil > now;/);
+    assert.match(engine, /stage\.playUntil = now \+ poseCycleMs\(stage\.anim\);/);
+    // Clip ids are unique per board so stacked pose cards do not clash.
+    assert.match(engine, /"pose-clip-" \+ \(\+\+poseClipSeq\)/);
+    assert.match(css, /\.pose-stage \{[^}]*aspect-ratio: 22 \/ 20;/);
   });
 
   it("routes dismiss and expand through the preload bridge", () => {

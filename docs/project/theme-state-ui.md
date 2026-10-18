@@ -337,6 +337,7 @@ Mini 状态映射：
 - 举牌期间普通状态视觉（`source` 非 `reaction`、非 `notification`、非 DND / mini）在 main 的 `requestDisplayedVisual` 被推迟：姿势结束时 renderer 的 `resume-from-reaction` 会取回当前状态，所以会话回合结束等普通状态切换不再把牌子顶掉；权限请求（`notification`）、拖拽 / 点击反应、DND、mini 照常立即打断；姿势超过 120 秒不再推迟（防 renderer 卡死）
 - 反应期间 main 停止光标轮询，所以悬停 / 滚轮 / 点击 / 右键由 hit window 上报、`src/notice-screen-runtime.js` 换算到 viewBox 后处理；悬停时黑板放大 1.5×（滚轮 1× 到窗口放得下为止，正方形窗口约 1.72×）、停留倒计时和换手暂停，跑马灯不停并在悬停期间循环（三遍已滚完则从头开始）；抛在空中时忽略悬停。右键落在黑板上时 main 用 `noticeCopyText`（`src/notice-text.js`，与通知卡片共用）写剪贴板，其他位置仍是普通右键菜单。姿势期间 hit window 的点击 / 双击反应被门控，点在黑板外仍是单击揭示 HUD；`prefers-reduced-motion` 下无跑马灯、无缩放过渡、不换手
 - `notice-store` 订阅不回放当前内容，main 的 reaction 订阅与 bubble 都以启动时的 `list()` 为基线，因此启动后推送的第一条通知也会反应（此前第一条被当成基线吞掉）
+- **动作卡片（pose）**：`POST /notice` 可带 `pose`（关键帧动画：每帧关节角度、`root` 平移/绕脚旋转、`face` 6 种表情、`prop` 7 种小道具，只写变化部分）。`src/notice-pose.js` 是唯一校验：夹住所有数值、丢掉不认识的字段、把每帧补全成完整姿势（上限 24 帧 / 20 秒），有 `series` 时图表优先。store 存为 `kind: "pose"`；卡片（`notice-bubble.html` 内联的豆豆人渲染，CSP 只允许内联脚本）只做插值和 SVG 绘制，点卡片重播、× 关闭，`prefers-reduced-motion` 下显示动作最大的一帧。动作卡片**不经过举牌**：不被 held、不触发宠物反应。通知历史只记标题和正文。agent 侧由共享 skill `pet-pose`（`~/.agents/skills/pet-pose`）把文字描述翻译成关键帧并推送
 - 浮层窗口（通知卡片、大图）的页面就绪改为跟踪 `did-start-loading` / `did-finish-load`：Electron 在派发 `did-finish-load` 时 `isLoading()` 仍为 true，旧逻辑在这个时刻判定“还在加载”而不显示窗口，导致启动后第一张卡片的窗口一直隐藏（隐藏窗口的动画帧约 1 帧/秒）
 - 渲染窗口的 theme config 走 `--theme-config` 命令行参数；Windows 整条进程命令行上限 32767 字符，所以 `buildRendererThemeConfig` 只在 `accessorySlots` 里各带一份 head / mouth attachment map，不再在顶层重复
 

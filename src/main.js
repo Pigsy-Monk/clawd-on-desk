@@ -1722,6 +1722,12 @@ function resolveNoticeScreenFile() {
 
 // Whether a notice arriving now will be shown on the sign: then its card is
 // held back until the board is clicked (or the sign is cut short).
+// A pose card is a little show of its own: it appears at once, never held
+// back behind the sign, and the pet does not react over it.
+function isPoseNotice(notice) {
+  return !!notice && notice.kind === "pose";
+}
+
 function canShowNoticeSign() {
   return typeof handleNoticeReaction.canPlay === "function"
     && handleNoticeReaction.canPlay()
@@ -2353,7 +2359,7 @@ const _noticeBubbleCtx = {
   // Option chosen with the user: while the pet holds a new notice up on its
   // sign the card stays back; clicking the board opens it. handleNoticeReaction
   // is defined further down and only consulted once notices arrive.
-  shouldHoldNewNotices: () => canShowNoticeSign(),
+  shouldHoldNewNotices: (fresh) => !fresh.some(isPoseNotice) && canShowNoticeSign(),
   get win() { return win; },
   // Deliberate: the notice stack is the pet "speaking", so it always follows
   // the pet. It ignores the global bubble-follow prefs (bubbleFollowPet
@@ -5970,7 +5976,7 @@ noticeStore.subscribe((snapshot) => {
     if (!newest || notice.createdAt >= newest.createdAt) newest = notice;
   }
   lastNoticeIds = ids;
-  if (!newest) return;
+  if (!newest || isPoseNotice(newest)) return;
   // The whole notice: the handler takes level, id and headline from it, and
   // the sign keeps it for copy-on-right-click.
   handleNoticeReaction(newest);
