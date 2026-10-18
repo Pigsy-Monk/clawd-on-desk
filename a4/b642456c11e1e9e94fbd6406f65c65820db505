@@ -1,0 +1,98 @@
+src/settings-tab-general.js
+  s_fa7684e93f0db3::t_2c2ca23879b310 17-21,84-87,534,1661-1707
+src/notice-bubble.html
+  s_fa7684e93f0db3::t_2bce8a6ea7deb3 2287-2289
+  s_fa7684e93f0db3::t_473e58c1046c27 1490-1645,1953
+  s_fa7684e93f0db3::t_9dbbe4a8840a9f 401-432,434-450
+  s_fa7684e93f0db3::t_3733255103b79a 2400-2414
+  s_fa7684e93f0db3::t_4204a68aa62b39 1646-1683,1698-1952
+  s_fa7684e93f0db3::t_c9ff3c7a94b5b0 2434-2437
+  s_fa7684e93f0db3::t_d92dcc6c109a8f 433
+  s_fa7684e93f0db3::t_f190b75bc65a74 1684-1697
+test/notice-store.test.js
+  s_fa7684e93f0db3::t_f583485ec23ff2 715-749
+AGENTS.md
+  s_fa7684e93f0db3::t_b1ea7926f76cdb 128
+test/notice-bubble.test.js
+  s_fa7684e93f0db3::t_f583485ec23ff2 919-1010
+src/preload.js
+  s_fa7684e93f0db3::t_cb1bce9e185f72 60,86
+src/stretch-session.js
+  s_fa7684e93f0db3::t_61153b9006273e 153-425
+  s_fa7684e93f0db3::t_0d8413d0fe633c 588-783
+  s_fa7684e93f0db3::t_1a014914b0ac6f 1-152
+  s_fa7684e93f0db3::t_8e5fa5b1b84440 426-587
+src/prefs.js
+  s_fa7684e93f0db3::t_2c2ca23879b310 326-347
+src/server-route-notice.js
+  s_fa7684e93f0db3::t_b22d7c7e9afa07 212-232,234
+test/stretch-scheduler.test.js
+  s_fa7684e93f0db3::t_cd0c269f7477d3 1-24,27-29,31-35,42-91,96-107,110,112,114-124,126-136,138-146,149-153,155-175
+  s_fa7684e93f0db3::t_0db3b5f0aa02bc 25-26,30,36-41,92-95,125,137,147-148,154
+  s_fa7684e93f0db3::t_e3169ec2538c93 108-109,111,113
+test/prefs.test.js
+  s_fa7684e93f0db3::t_5938d0d6ae2775 385-403
+src/settings-i18n.js
+  s_fa7684e93f0db3::t_f07f1f870c263f 804-818,2048-2062,3294-3308,4540-4554,5786-5800,7030-7044,8274-8288
+src/stretch-runtime.js
+  s_fa7684e93f0db3::t_74178a8e15f4a4 1-30,32-158,163-167,169-335,337-354
+  s_fa7684e93f0db3::t_97646248627302 31,159-162,168
+  s_fa7684e93f0db3::t_9221714077f107 336
+src/renderer.js
+  s_fa7684e93f0db3::t_cb1bce9e185f72 1374-1378,1436,1657,1936-1944
+src/main.js
+  s_fa7684e93f0db3::t_cdf11f5024882f 3308-3309
+  s_fa7684e93f0db3::t_9221714077f107 208,618-620,2328-2337,2356-2375,2395-2398,5021-5022,6031-6047,6054-6106,6108-6116,6446-6447,6605
+src/notice-store.js
+  s_fa7684e93f0db3::t_2f61c8b6833a62 439-451
+  s_fa7684e93f0db3::t_52279a7af35f0a 228-231,234
+  s_fa7684e93f0db3::t_83870dd2ee130e 398-422
+  s_fa7684e93f0db3::t_403cc483fa4497 245
+src/settings-actions.js
+  s_fa7684e93f0db3::t_2c2ca23879b310 338-342,2503-2511,2802
+test/notice-route.test.js
+  s_fa7684e93f0db3::t_94be1ff8d0507b 13,314-333
+src/notice-screen-runtime.js
+  s_fa7684e93f0db3::t_a3c2b84ae71534 16-18,64-69,131-135,154,158-159,228-234
+test/stretch-session.test.js
+  s_fa7684e93f0db3::t_387132c1d1e215 1-318
+test/stretch-runtime.test.js
+  s_fa7684e93f0db3::t_97646248627302 152-160
+  s_fa7684e93f0db3::t_8cedb2d22e3465 1-151,161-282
+src/server.js
+  s_fa7684e93f0db3::t_cdf11f5024882f 1018-1022
+  s_fa7684e93f0db3::t_b22d7c7e9afa07 55,1023
+src/stretch-scheduler.js
+  s_fa7684e93f0db3::t_f1dbf524bf018a 1-162
+test/notice-screen-runtime.test.js
+  s_fa7684e93f0db3::t_f583485ec23ff2 323-373
+src/menu.js
+  s_fa7684e93f0db3::t_7543ac1a43f6f8 488-525,619-623,677
+test/settings-actions.test.js
+  s_fa7684e93f0db3::t_5938d0d6ae2775 286-308
+src/notice-bubble.js
+  s_fa7684e93f0db3::t_a78f6b0bda4deb 10,42-43,69,81,185-187,259-265,280-283,304,366,442,475,521,545,627-664,684,697,719,741-743
+src/i18n.js
+  s_fa7684e93f0db3::t_f07f1f870c263f 124-130,682-688,1232-1238,1783-1789,2332-2338,2881-2887,3430-3436
+src/preload-notice-bubble.js
+  s_fa7684e93f0db3::t_a78f6b0bda4deb 8
+docs/project/theme-state-ui.md
+  s_fa7684e93f0db3::t_0c1259c3943f1c 345-356,358
+  s_fa7684e93f0db3::t_b1ea7926f76cdb 357
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.50-trip",
+  "base_commit_sha": "a4b642456c11e1e9e94fbd6406f65c65820db505",
+  "prompts": {},
+  "sessions": {
+    "s_fa7684e93f0db3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "54830dbf-2d5f-468b-9dba-2ecd4240c943",
+        "model": "claude-opus-5.5"
+      },
+      "human_author": "zwsong <zwsong@trip.com>"
+    }
+  }
+}
