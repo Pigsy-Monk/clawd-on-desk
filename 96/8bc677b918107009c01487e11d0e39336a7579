@@ -1,0 +1,39 @@
+test/notice-bubble.test.js
+  s_fcfb4c3a34b5c9::t_80319019911fa7 185-189,710,715-728,732-734
+  s_fcfb4c3a34b5c9::t_4426c8092daa63 729-731
+test/notice-pose.test.js
+  s_fcfb4c3a34b5c9::t_94551c6422d6f3 1-117
+src/notice-history.js
+  s_fcfb4c3a34b5c9::t_45c381b29b249c 44,84-85
+src/notice-pose.js
+  s_fcfb4c3a34b5c9::t_0362ccd52b5f93 1-133
+src/notice-bubble.js
+  s_fcfb4c3a34b5c9::t_e687a2e295c4b9 39-40,122-123
+docs/project/theme-state-ui.md
+  s_fcfb4c3a34b5c9::t_9f72af6c2c0cd9 340
+src/main.js
+  s_fcfb4c3a34b5c9::t_e687a2e295c4b9 1725-1729
+src/notice-store.js
+  s_fcfb4c3a34b5c9::t_75003daf0c9c58 51-53,282,285-289,304,426
+  s_fcfb4c3a34b5c9::t_771dcfecb582fe 35-36
+src/notice-bubble.html
+  s_fcfb4c3a34b5c9::t_4426c8092daa63 1043-1048,1051,1054-1055,1057,1059,1081,1090-1091,1093,1095-1097
+  s_fcfb4c3a34b5c9::t_20cbdabba69f88 818,989-990
+  s_fcfb4c3a34b5c9::t_707d382a6bc9eb 297-309,803-817,819-988,991-1042,1049-1050,1052-1053,1056,1058,1060-1080,1082-1089,1092,1094,1098-1101,1159-1168,1212,1233,1236-1237,1277-1278,1293
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.50-trip",
+  "base_commit_sha": "968bc677b918107009c01487e11d0e39336a7579",
+  "prompts": {},
+  "sessions": {
+    "s_fcfb4c3a34b5c9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "91bf79ba-6310-4db7-a9c0-b11cfd6cb408",
+        "model": "claude-opus-5.5"
+      },
+      "human_author": "zwsong <zwsong@trip.com>"
+    }
+  }
+}
