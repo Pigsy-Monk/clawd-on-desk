@@ -161,6 +161,15 @@ module.exports = function initNoticeBubble(ctx) {
   let visibilityRestorePending = false;
   let hideTimer = null;
   let unsubscribeStore = null;
+  // Whether the page has finished loading. Electron still reports
+  // isLoading() === true while did-finish-load is being dispatched, so a
+  // show that runs from that event (the first notice after start) saw a
+  // "loading" page and never showed the window. Tracked from the load events
+  // instead; isLoading() remains the answer when no event has been seen.
+  let pageLoaded = false;
+  function pageReady() {
+    return !!bubble && !bubble.isDestroyed() && (pageLoaded || !bubble.webContents.isLoading());
+  }
   // Last notice the renderer asked to expand; the chart window that consumes
   // it lands in a follow-up change.
   let expandedNoticeId = null;
@@ -271,7 +280,7 @@ module.exports = function initNoticeBubble(ctx) {
       || !presentationActive
       || visibilityRestorePending
       || notices.length === 0
-      || bubble.webContents.isLoading()
+      || !pageReady()
     ) return false;
     bubble.webContents.send("notice-bubble-show", presentationPayload());
     return true;
@@ -304,11 +313,20 @@ module.exports = function initNoticeBubble(ctx) {
         preload: path.join(__dirname, "preload-notice-bubble.js"),
         nodeIntegration: false,
         contextIsolation: true,
+        // The window is shown inactive and never focused, and Chromium
+        // throttles such a window's animation frames almost to zero; a pose
+        // card's figure then stands still. Same setting as the pet windows.
+        backgroundThrottling: false,
       },
     });
 
     if (isWin) bubble.setAlwaysOnTop(true, WIN_TOPMOST_LEVEL);
 
+    // Registered before anything else listens, so it has run by the time the
+    // deferred show below checks readiness.
+    pageLoaded = false;
+    bubble.webContents.on("did-start-loading", () => { pageLoaded = false; });
+    bubble.webContents.on("did-finish-load", () => { pageLoaded = true; });
     bubble.loadFile(path.join(__dirname, "notice-bubble.html"));
     bubble.on("closed", () => {
       bubble = null;
@@ -385,7 +403,7 @@ module.exports = function initNoticeBubble(ctx) {
   }
 
   function showPresentationWindow() {
-    if (bubble.webContents.isLoading()) return false;
+    if (!pageReady()) return false;
     bubble.showInactive();
     keepOutOfTaskbar(bubble);
     if (isMac) deferMacFloatingVisibility(ctx, bubble);
@@ -403,7 +421,7 @@ module.exports = function initNoticeBubble(ctx) {
     ) return false;
     const hidden = typeof hiddenOverride === "boolean" ? hiddenOverride : ctx.petHidden;
     if (hidden) return false;
-    if (bubble.webContents.isLoading()) return false;
+    if (!pageReady()) return false;
 
     visibilityRestorePending = false;
     // Position first: the payload carries the tail side, and that is read off
@@ -454,7 +472,7 @@ module.exports = function initNoticeBubble(ctx) {
       }
     };
 
-    if (win.webContents.isLoading()) {
+    if (!pageReady()) {
       win.webContents.once("did-finish-load", send);
     } else {
       send();

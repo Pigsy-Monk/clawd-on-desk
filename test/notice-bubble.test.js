@@ -21,21 +21,36 @@ class FakeBrowserWindow {
     this.sent = [];
     this.loadedFile = null;
     const self = this;
+    // Off by default (the page is ready); a test can set loading and replay
+    // the load events with emitLoad().
+    this.loading = false;
+    this.listeners = [];
     this.webContents = {
-      isLoading: () => false,
+      isLoading: () => self.loading,
       isDestroyed: () => self.destroyed,
       insertCSS: () => Promise.resolve("key"),
       removeInsertedCSS: () => Promise.resolve(),
       setZoomFactor: () => {},
       send: (channel, payload) => self.sent.push({ channel, payload }),
-      once: () => {},
-      on: () => {},
+      once: (event, fn) => self.listeners.push({ event, fn, once: true }),
+      on: (event, fn) => self.listeners.push({ event, fn, once: false }),
     };
     windows.set(this.webContents, this);
   }
 
   static fromWebContents(contents) { return windows.get(contents) || null; }
   isDestroyed() { return this.destroyed; }
+  // Electron's order: did-finish-load fires while isLoading() is still true;
+  // only did-stop-loading, after it, sees the page done.
+  emitLoad() {
+    for (const event of ["did-finish-load", "did-stop-loading"]) {
+      if (event === "did-stop-loading") this.loading = false;
+      for (const l of this.listeners.filter((x) => x.event === event)) {
+        if (l.once) this.listeners.splice(this.listeners.indexOf(l), 1);
+        l.fn();
+      }
+    }
+  }
   loadFile(file) { this.loadedFile = file; }
   setAlwaysOnTop() {}
   setBounds(bounds) { this.bounds = bounds; }
@@ -230,6 +245,24 @@ describe("notice bubble contract", () => {
     bubble.cleanup();
     assert.equal(bubble.getBubbleWindow(), null);
     assert.equal(win.destroyed, true);
+  });
+
+  it("shows the first notice even though the page reports loading at did-finish-load", () => {
+    const ctx = createCtx();
+    const bubble = initNoticeBubble(ctx);
+    const orig = FakeBrowserWindow.prototype.loadFile;
+    FakeBrowserWindow.prototype.loadFile = function (file) { this.loading = true; return orig.call(this, file); };
+    try {
+      ctx.noticeStore.push(notice("n1"));
+    } finally {
+      FakeBrowserWindow.prototype.loadFile = orig;
+    }
+    const win = bubble.getBubbleWindow();
+    assert.equal(win.visible, false, "nothing to show before the page loads");
+    win.emitLoad();
+    assert.equal(win.visible, true, "shown once the page has loaded");
+    assert.ok(win.sent.some((entry) => entry.channel === "notice-bubble-show"));
+    bubble.cleanup();
   });
 
   it("sends the theme id and the tail side next to the notices", () => {

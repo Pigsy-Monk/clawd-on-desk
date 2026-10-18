@@ -172,6 +172,15 @@ module.exports = function initNoticeChartWindow(ctx) {
   let visibilityRestorePending = false;
   let hideTimer = null;
   let unsubscribeStore = null;
+  // Whether the page has finished loading. Electron still reports
+  // isLoading() === true while did-finish-load is being dispatched, so a
+  // show that runs from that event (the first notice after start) saw a
+  // "loading" page and never showed the window. Tracked from the load events
+  // instead; isLoading() remains the answer when no event has been seen.
+  let pageLoaded = false;
+  function pageReady() {
+    return !!bubble && !bubble.isDestroyed() && (pageLoaded || !bubble.webContents.isLoading());
+  }
 
   function notifyOrbitGeometryChanged() {
     const reposition = typeof ctx.repositionQuotaRing === "function"
@@ -285,6 +294,9 @@ module.exports = function initNoticeChartWindow(ctx) {
       hideNoticeChart();
     });
 
+    pageLoaded = false;
+    bubble.webContents.on("did-start-loading", () => { pageLoaded = false; });
+    bubble.webContents.on("did-finish-load", () => { pageLoaded = true; });
     bubble.loadFile(path.join(__dirname, "notice-chart.html"));
     bubble.on("closed", () => {
       bubble = null;
@@ -351,7 +363,7 @@ module.exports = function initNoticeChartWindow(ctx) {
   }
 
   function showPresentationWindow() {
-    if (bubble.webContents.isLoading()) return false;
+    if (!pageReady()) return false;
     bubble.showInactive();
     keepOutOfTaskbar(bubble);
     if (isMac) deferMacFloatingVisibility(ctx, bubble);
@@ -369,7 +381,7 @@ module.exports = function initNoticeChartWindow(ctx) {
     ) return false;
     const hidden = typeof hiddenOverride === "boolean" ? hiddenOverride : ctx.petHidden;
     if (hidden) return false;
-    if (bubble.webContents.isLoading()) return false;
+    if (!pageReady()) return false;
 
     visibilityRestorePending = false;
     bubble.webContents.send("notice-chart-show", activePayload);
@@ -436,7 +448,7 @@ module.exports = function initNoticeChartWindow(ctx) {
       }
     };
 
-    if (win.webContents.isLoading()) {
+    if (!pageReady()) {
       win.webContents.once("did-finish-load", send);
     } else {
       send();
