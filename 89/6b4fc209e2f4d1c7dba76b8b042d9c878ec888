@@ -1,0 +1,84 @@
+test/renderer-aim-tracking.test.js
+  s_fa7684e93f0db3::t_03f91a4343d2ed 206-210,214,220
+  s_fa7684e93f0db3::t_8383b9db87fb9e 136-146
+  s_fa7684e93f0db3::t_e637b20a8a9400 215-217
+  s_fa7684e93f0db3::t_e9b794e955778e 1-133,147-205,211-213,218-219,221-255
+  s_fa7684e93f0db3::t_4cad9b54372e47 134-135
+src/tick.js
+  s_fa7684e93f0db3::t_30e62c7730d210 415-418
+  s_fa7684e93f0db3::t_4bfca36588d7f7 452-455
+  s_fa7684e93f0db3::t_ae073255b20aa4 569-588,591
+  s_fa7684e93f0db3::t_fda59158bf2c71 592-595
+  s_fa7684e93f0db3::t_b82058378d51b8 23
+  s_fa7684e93f0db3::t_4a667b0ba615d1 96
+  s_fa7684e93f0db3::t_afabc1ec98690a 64-75
+docs/project/theme-state-ui.md
+  s_fa7684e93f0db3::t_684655b2990615 73-98,349
+test/tick-aim-payload.test.js
+  s_fa7684e93f0db3::t_944af977f70cde 1-130,138-139,142-148,150-161,163-164,168-172,174,176-181,183-191
+  s_fa7684e93f0db3::t_f1963c0ef6c96a 131-137,140-141,149,162,173,175,182
+  s_fa7684e93f0db3::t_000eb3ac997801 165-167
+test/helpers/renderer-harness.js
+  s_fa7684e93f0db3::t_2ecc6b95a93e12 1-16,18-101,113-295,297-340,345-380,382-384
+  s_fa7684e93f0db3::t_8e87076246bdc8 344
+  s_fa7684e93f0db3::t_dddcc4f96abf06 102-112,341-343
+  s_fa7684e93f0db3::t_bd28b6d696d868 17,296,381
+test/theme-tracking-layers-schema.test.js
+  s_fa7684e93f0db3::t_6f46aae0625244 1-145
+  s_fa7684e93f0db3::t_8236aecacb943a 146-194
+test/hit-renderer.test.js
+  s_fa7684e93f0db3::t_d5172941581b96 554-559,576,584,594,607,618,629,640,650,664
+  s_fa7684e93f0db3::t_ef3f6d07574176 544-553,560-575,577-583,585-593,595-606,608-617,619-628,630-639,641-649,651-663,665-668
+src/preload.js
+  s_fa7684e93f0db3::t_6863b2f37f7e05 40
+  s_fa7684e93f0db3::t_abd3b7cdb2b217 41-42
+  s_fa7684e93f0db3::t_916a300d2795ab 7-19
+src/theme-schema.js
+  s_fa7684e93f0db3::t_7579dd778ec56e 82-201,244-245
+src/state.js
+  s_fa7684e93f0db3::t_029aea81e220fd 973-976
+src/aim-tracking.js
+  s_fa7684e93f0db3::t_2f512e13121fe0 1-250
+src/hit-renderer.js
+  s_fa7684e93f0db3::t_2c7b8c87268300 309,318,321
+  s_fa7684e93f0db3::t_5c65245cddf7f4 409,415
+  s_fa7684e93f0db3::t_eee48b34ab1eda 255-267
+scripts/validate-theme.js
+  s_fa7684e93f0db3::t_f408922e2486d1 370-436
+  s_fa7684e93f0db3::t_282b77e6c269e7 472
+src/index.html
+  s_fa7684e93f0db3::t_ffe84af0c26c40 37
+test/renderer-low-power.test.js
+  s_fa7684e93f0db3::t_2ecc6b95a93e12 9-20
+src/renderer.js
+  s_fa7684e93f0db3::t_885c41e0965707 640,643-644
+  s_fa7684e93f0db3::t_ef5a0d426a01df 3253-3256,3263
+test/validate-theme-aim-layers.test.js
+  s_fa7684e93f0db3::t_79ead6916efcd0 79-81,84-86
+  s_fa7684e93f0db3::t_982eabde7ad131 82-83,87-88,93,104-105
+  s_fa7684e93f0db3::t_a7276d81320a96 1-78,89-92,94-103,106-147
+docs/guides/guide-theme-creation.md
+  s_fa7684e93f0db3::t_083c1362ecf073 419
+  s_fa7684e93f0db3::t_214b094ce37c70 251-252
+test/aim-tracking.test.js
+  s_fa7684e93f0db3::t_42485d382d723e 176-177
+  s_fa7684e93f0db3::t_49084da8698c72 268-322
+  s_fa7684e93f0db3::t_6d9c29d20eb86d 1-175,178-250,253-267
+  s_fa7684e93f0db3::t_f0f9d7ab572cb4 251-252
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.50-trip",
+  "base_commit_sha": "896b4fc209e2f4d1c7dba76b8b042d9c878ec888",
+  "prompts": {},
+  "sessions": {
+    "s_fa7684e93f0db3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "54830dbf-2d5f-468b-9dba-2ecd4240c943",
+        "model": "claude-opus-5.5"
+      },
+      "human_author": "zwsong <zwsong@trip.com>"
+    }
+  }
+}
