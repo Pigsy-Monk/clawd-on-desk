@@ -3428,4 +3428,86 @@ describe("renderer notice sign", () => {
     assert.ok(bare.api.pendingNext.src.includes("notif.svg") || bare.api.pendingNext.data.includes("notif.svg"));
     assert.strictEqual(bare.api.noticeScreenPose, null);
   });
+
+  describe("on a theme that brings its own board", () => {
+    // A calico-style bubble: wide, centred text, a level badge, no hands.
+    const SIGN = {
+      screen: { x: 22, y: -76, w: 218, h: 81 },
+      line: { startX: 76, endX: 224, baselineY: -15, titleFontSize: 25, align: "center" },
+      titleColor: "#7D3D28",
+      feedbackColor: "#7D3D28",
+      levels: { warn: { color: "#F8DB8E", glyph: "!" } },
+    };
+
+    function playBubble(notice = {}, widths = {}, options = {}) {
+      const harness = createScreenHarness({
+        ...options,
+        themeConfig: {
+          reactions: {
+            "notice-screen": { file: SCREEN_FILE, sign: SIGN },
+            notification: { file: "notif.svg", duration: 3000 },
+          },
+        },
+      });
+      harness.electronHandlers.onPlayNoticeReaction({
+        level: "warn", id: "n1", title: "构建完成", visualRequest: visualRequest(), ...notice,
+      });
+      const pending = harness.api.pendingNext;
+      const nodes = {};
+      for (const id of ["notice-line", "notice-screen-zoom", "notice-chalk", "notice-level-glyph"]) {
+        nodes[id] = new FakeSvgNode(id === "notice-level-glyph" ? "text" : "g", widths);
+      }
+      const doc = {
+        nodes,
+        getElementById: (id) => nodes[id] || null,
+        createElementNS: (ns, tag) => new FakeSvgNode(tag, widths),
+      };
+      pending.contentDocument = doc;
+      pending.listeners.get("load")();
+      return { harness, doc };
+    }
+
+    it("puts the level in the badge, centres the title and reports the bubble", () => {
+      const { harness, doc } = playBubble({ title: "<b>x</b>" }, { "<b>x</b>": 40 });
+      const [line, feedback] = doc.nodes["notice-line"].children;
+      assert.strictEqual(line.children.length, 1, "the badge replaces the prompt");
+      const [title] = line.children;
+      assert.strictEqual(title.textContent, "<b>x</b>", "agent text stays text");
+      assert.strictEqual(title.getAttribute("fill"), "#7D3D28");
+      assert.strictEqual(title.getAttribute("font-size"), "25");
+      assert.strictEqual(title.getAttribute("y"), "-15");
+      // 148 units of room, 40 of text: centred at 76 + 54.
+      assert.strictEqual(Number(title.getAttribute("x")), 130);
+      assert.strictEqual(feedback.getAttribute("fill"), "#7D3D28");
+      assert.strictEqual(doc.nodes["notice-level-glyph"].textContent, "!", "the theme's glyph, not the notice's");
+      assert.strictEqual(doc.nodes["notice-chalk"].getAttribute("fill"), "#F8DB8E");
+      assert.deepStrictEqual(statusCalls(harness)[0], { active: true, id: "n1", rect: SIGN.screen });
+    });
+
+    it("keeps the bubble where it is and zooms it from its own rect", () => {
+      const { harness, doc } = playBubble();
+      const pose = harness.api.noticeScreenPose;
+      assert.strictEqual(pose.tossTimer, null, "nothing to toss it between");
+      harness.electronHandlers.onNoticeScreenPointer({ type: "move", x: 130, y: -30 });
+      assert.strictEqual(pose.hovering, true);
+      const zoomed = statusCalls(harness).at(-1).rect;
+      assert.ok(Math.abs(zoomed.w - 218 * 1.5) < 1e-9 && Math.abs(zoomed.h - 81 * 1.5) < 1e-9, JSON.stringify(zoomed));
+      // Outside the bubble (the clawd board's spot) is not a hover.
+      const outside = playBubble().harness;
+      outside.electronHandlers.onNoticeScreenPointer({ type: "move", x: 14, y: -4 });
+      assert.strictEqual(outside.api.noticeScreenPose.hovering, false);
+      assert.ok(doc.nodes["notice-screen-zoom"]);
+    });
+
+    it("scrolls an overflowing title from the left of its room", () => {
+      const { harness, doc } = playBubble({ title: "long" }, { long: 200 });
+      const [line] = doc.nodes["notice-line"].children;
+      assert.strictEqual(Number(line.children[0].getAttribute("x")), 76);
+      // 52 units past the room, scrolled at clawd's speed per em of a 25-unit
+      // font: 260 / (25 / 3.6) ms per unit.
+      const plan = harness.api.noticeScreenPose.plan;
+      assert.ok(Math.abs(plan.overflow - 52) < 1e-9, String(plan.overflow));
+      assert.strictEqual(plan.scrollMs, Math.round(52 * 260 * 3.6 / 25));
+    });
+  });
 });

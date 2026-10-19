@@ -1,7 +1,8 @@
-// Pure geometry and timing for the notice sign (the clawd theme's
-// "notice-screen" reaction: Clawd holds a small chalkboard up on a stick,
-// passing it from hand to hand, while the notice title scrolls across it in
-// chalk).
+// Pure geometry and timing for the notice sign: a theme's "notice-screen"
+// reaction, where the notice title scrolls across a board the pet shows. The
+// constants below are clawd's sign (a small chalkboard on a stick, passed from
+// hand to hand); a theme can declare its own board with `reactions
+// ["notice-screen"].sign`, which resolveSign() validates into the same shape.
 //
 // Everything here is in the SVG's own viewBox units and plain milliseconds so
 // the same functions drive the render window (renderer.js loads this file via
@@ -68,13 +69,124 @@
 
   const COPY_FEEDBACK_MS = 1200;
   const COPY_FEEDBACK_TEXT = "已复制 ✓";
-
-  function resolveLevel(level) {
-    return Object.prototype.hasOwnProperty.call(LEVELS, level) ? LEVELS[level] : LEVELS.info;
-  }
+  const TITLE_COLOR = "#F2F2E6";
 
   function isFiniteRect(rect) {
     return !!rect && [rect.x, rect.y, rect.w, rect.h].every(Number.isFinite);
+  }
+
+  // clawd's sign, in the shape resolveSign() returns. `leftHandDx` is null for
+  // a board that stays where it is (no hand-to-hand toss).
+  const DEFAULT_SIGN = Object.freeze({
+    screen: SCREEN_RECT,
+    line: Object.freeze({
+      startX: LINE_START_X,
+      endX: LINE_END_X,
+      baselineY: LINE_BASELINE_Y,
+      promptFontSize: PROMPT_FONT_SIZE,
+      titleFontSize: TITLE_FONT_SIZE,
+      promptGap: PROMPT_GAP,
+      align: "start",
+    }),
+    titleColor: TITLE_COLOR,
+    feedbackColor: LEVELS.success.color,
+    levels: LEVELS,
+    leftHandDx: LEFT_HAND_DX,
+    tossLift: TOSS_LIFT,
+    // The scroll speed is set per title em, so a bigger board reads as fast.
+    marqueeMsPerUnit: MARQUEE_MS_PER_UNIT,
+  });
+
+  const HEX_COLOR_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
+  const SIGN_EXTENT = 10000;
+  const SIGN_FONT_MAX = 1000;
+  const LEVEL_GLYPH_MAX = 4;
+
+  function finiteIn(value, min, max) {
+    return Number.isFinite(value) && value >= min && value <= max;
+  }
+
+  function readSignRect(value) {
+    if (!value || typeof value !== "object") return null;
+    const rect = { x: value.x, y: value.y, w: value.w, h: value.h };
+    if (!finiteIn(rect.x, -SIGN_EXTENT, SIGN_EXTENT) || !finiteIn(rect.y, -SIGN_EXTENT, SIGN_EXTENT)) return null;
+    if (!finiteIn(rect.w, 0, SIGN_EXTENT) || !finiteIn(rect.h, 0, SIGN_EXTENT) || rect.w <= 0 || rect.h <= 0) return null;
+    return Object.freeze(rect);
+  }
+
+  function readSignLine(value) {
+    if (!value || typeof value !== "object") return null;
+    const { startX, endX, baselineY, titleFontSize } = value;
+    if (!finiteIn(startX, -SIGN_EXTENT, SIGN_EXTENT) || !finiteIn(endX, -SIGN_EXTENT, SIGN_EXTENT) || endX <= startX) return null;
+    if (!finiteIn(baselineY, -SIGN_EXTENT, SIGN_EXTENT)) return null;
+    if (!finiteIn(titleFontSize, 0, SIGN_FONT_MAX) || titleFontSize <= 0) return null;
+    const promptFontSize = finiteIn(value.promptFontSize, 0, SIGN_FONT_MAX) && value.promptFontSize > 0
+      ? value.promptFontSize
+      : titleFontSize;
+    const promptGap = finiteIn(value.promptGap, 0, SIGN_EXTENT)
+      ? value.promptGap
+      : PROMPT_GAP * (titleFontSize / TITLE_FONT_SIZE);
+    return Object.freeze({
+      startX,
+      endX,
+      baselineY,
+      promptFontSize,
+      titleFontSize,
+      promptGap,
+      align: value.align === "center" ? "center" : "start",
+    });
+  }
+
+  function readColor(value, fallback) {
+    return typeof value === "string" && HEX_COLOR_RE.test(value) ? value : fallback;
+  }
+
+  function readLevels(value) {
+    const out = {};
+    for (const name of Object.keys(LEVELS)) {
+      const entry = value && typeof value === "object" && value[name] && typeof value[name] === "object"
+        ? value[name]
+        : {};
+      const glyph = typeof entry.glyph === "string" && entry.glyph.length > 0 && entry.glyph.length <= LEVEL_GLYPH_MAX
+        ? entry.glyph
+        : LEVELS[name].prompt;
+      out[name] = Object.freeze({
+        prompt: glyph,
+        color: readColor(entry.color, LEVELS[name].color),
+      });
+    }
+    return Object.freeze(out);
+  }
+
+  // A theme's `reactions["notice-screen"].sign`, validated: the board rect
+  // and the text line are taken together or not at all (a board from one and a
+  // line from the other would put the text off the board), so anything
+  // malformed falls back to clawd's sign as a whole. Theme-supplied strings
+  // only ever become colours or a short level glyph.
+  function resolveSign(raw) {
+    if (!raw || typeof raw !== "object") return DEFAULT_SIGN;
+    const screen = readSignRect(raw.screen);
+    const line = readSignLine(raw.line);
+    if (!screen || !line) return DEFAULT_SIGN;
+    const leftHandDx = finiteIn(raw.leftHandDx, -SIGN_EXTENT, SIGN_EXTENT) && raw.leftHandDx !== 0
+      ? raw.leftHandDx
+      : null;
+    const scale = line.titleFontSize / TITLE_FONT_SIZE;
+    return Object.freeze({
+      screen,
+      line,
+      titleColor: readColor(raw.titleColor, TITLE_COLOR),
+      feedbackColor: readColor(raw.feedbackColor, LEVELS.success.color),
+      levels: readLevels(raw.levels),
+      leftHandDx,
+      tossLift: TOSS_LIFT * (screen.h / SCREEN_RECT.h),
+      marqueeMsPerUnit: MARQUEE_MS_PER_UNIT / scale,
+    });
+  }
+
+  function resolveLevel(level, sign = DEFAULT_SIGN) {
+    const levels = (sign && sign.levels) || LEVELS;
+    return Object.prototype.hasOwnProperty.call(levels, level) ? levels[level] : levels.info;
   }
 
   // A pre-measurement stand-in for getComputedTextLength(): CJK and other
@@ -101,27 +213,38 @@
   }
 
   // Horizontal layout of one line given the measured prompt and title widths:
-  // where the title goes, and how far the whole line overflows the space the
-  // slate gives it.
-  function layoutLine(promptWidth, titleWidth) {
+  // where the prompt and the title go, and how far the whole line overflows
+  // the space the board gives it. A sign with `align: "center"` centres a line
+  // that fits; a line that overflows always starts at the left so it can
+  // scroll.
+  function layoutLine(promptWidth, titleWidth, sign = DEFAULT_SIGN) {
+    const line = (sign && sign.line) || DEFAULT_SIGN.line;
     const prompt = Number.isFinite(promptWidth) && promptWidth > 0 ? promptWidth : 0;
     const title = Number.isFinite(titleWidth) && titleWidth > 0 ? titleWidth : 0;
-    const titleX = LINE_START_X + prompt + (prompt > 0 ? PROMPT_GAP : 0);
-    const endX = titleX + title;
+    const width = prompt + (prompt > 0 ? line.promptGap : 0) + title;
+    const room = line.endX - line.startX;
+    const overflow = Math.max(0, width - room);
+    const startX = line.align === "center" && overflow === 0
+      ? line.startX + (room - width) / 2
+      : line.startX;
+    const titleX = startX + prompt + (prompt > 0 ? line.promptGap : 0);
     return {
-      promptX: LINE_START_X,
+      promptX: startX,
       titleX,
-      endX,
-      overflow: Math.max(0, endX - LINE_END_X),
+      endX: titleX + title,
+      overflow,
     };
   }
 
-  function buildMarqueePlan(overflow) {
+  function buildMarqueePlan(overflow, sign = DEFAULT_SIGN) {
     const units = Number.isFinite(overflow) && overflow > 0.01 ? overflow : 0;
     if (units === 0) {
       return { overflow: 0, scrollMs: 0, passMs: 0, passes: 0, totalMs: 0 };
     }
-    const scrollMs = Math.round(units * MARQUEE_MS_PER_UNIT);
+    const msPerUnit = sign && Number.isFinite(sign.marqueeMsPerUnit) && sign.marqueeMsPerUnit > 0
+      ? sign.marqueeMsPerUnit
+      : MARQUEE_MS_PER_UNIT;
+    const scrollMs = Math.round(units * msPerUnit);
     const passMs = MARQUEE_START_HOLD_MS + scrollMs + MARQUEE_END_HOLD_MS;
     return {
       overflow: units,
@@ -253,23 +376,28 @@
     return { scale: next, carry };
   }
 
-  // The board's rect while the given hand holds it ("right" or "left").
-  function signRect(side) {
-    if (side !== "left") return SCREEN_RECT;
-    return Object.freeze({ ...SCREEN_RECT, x: SCREEN_RECT.x + LEFT_HAND_DX });
+  // The board's rect while the given hand holds it ("right" or "left"). A
+  // sign without a second hand (leftHandDx null) is always where it starts.
+  function signRect(side, sign = DEFAULT_SIGN) {
+    const screen = (sign && sign.screen) || SCREEN_RECT;
+    const dx = sign ? sign.leftHandDx : LEFT_HAND_DX;
+    if (side !== "left" || !Number.isFinite(dx)) return screen;
+    return Object.freeze({ ...screen, x: screen.x + dx });
   }
 
   // Where the sign is `t` (0..1) of the way through a toss that starts in
   // `fromSide`: the carrier's offset from its right-hand position, and which
   // hand the arms show (they swap at the top of the arc).
-  function tossPose(fromSide, t) {
+  function tossPose(fromSide, t, sign = DEFAULT_SIGN) {
+    const handDx = sign && Number.isFinite(sign.leftHandDx) ? sign.leftHandDx : LEFT_HAND_DX;
+    const lift = sign && Number.isFinite(sign.tossLift) ? sign.tossLift : TOSS_LIFT;
     const k = Number.isFinite(t) ? Math.max(0, Math.min(1, t)) : 0;
-    const from = fromSide === "left" ? LEFT_HAND_DX : 0;
-    const to = fromSide === "left" ? 0 : LEFT_HAND_DX;
+    const from = fromSide === "left" ? handDx : 0;
+    const to = fromSide === "left" ? 0 : handDx;
     const eased = k < 0.5 ? 2 * k * k : 1 - 2 * (1 - k) * (1 - k);
     return {
       dx: from + (to - from) * eased,
-      dy: -TOSS_LIFT * Math.sin(Math.PI * k),
+      dy: -lift * Math.sin(Math.PI * k),
       arms: k >= 0.5 ? (fromSide === "left" ? "right" : "left") : (fromSide === "left" ? "left" : "right"),
     };
   }
@@ -316,6 +444,9 @@
     WHEEL_NOTCH_PX,
     COPY_FEEDBACK_MS,
     COPY_FEEDBACK_TEXT,
+    TITLE_COLOR,
+    DEFAULT_SIGN,
+    resolveSign,
     resolveLevel,
     estimateTextWidth,
     layoutLine,

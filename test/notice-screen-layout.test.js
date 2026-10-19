@@ -243,3 +243,104 @@ describe("notice sign zoom and hand-to-hand geometry", () => {
     assert.ok(!layout.pointInRect({ x: 1, y: 1 }, null));
   });
 });
+
+describe("theme-declared notice sign", () => {
+  const CALICO_FILE = "calico-notice-screen.svg";
+  const calico = () => themeLoader.loadTheme("calico", { strict: true });
+  const calicoSign = () => layout.resolveSign(calico().reactions["notice-screen"].sign);
+
+  // The window a 230×230 pet shows of calico's sign, the renderer's way.
+  function calicoVisible(size = 230) {
+    const theme = calico();
+    const art = hitGeometry.getAssetRectScreen(theme, { x: 0, y: 0, width: size, height: size }, "idle", CALICO_FILE);
+    return layout.computeVisibleViewBoxRect(
+      { left: art.x, top: art.y, width: art.w, height: art.h },
+      { width: size, height: size },
+      theme.fileViewBoxes[CALICO_FILE]
+    );
+  }
+
+  it("keeps clawd's sign when a theme declares none or a malformed one", () => {
+    assert.strictEqual(layout.resolveSign(undefined), layout.DEFAULT_SIGN);
+    assert.strictEqual(layout.resolveSign({ screen: { x: 0, y: 0, w: 10, h: 5 } }), layout.DEFAULT_SIGN, "a board without a line");
+    assert.strictEqual(layout.resolveSign({
+      screen: { x: 0, y: 0, w: -1, h: 5 },
+      line: { startX: 1, endX: 9, baselineY: 3, titleFontSize: 2 },
+    }), layout.DEFAULT_SIGN, "a negative width");
+    assert.strictEqual(layout.resolveSign({
+      screen: { x: 0, y: 0, w: 10, h: 5 },
+      line: { startX: 9, endX: 1, baselineY: 3, titleFontSize: 2 },
+    }), layout.DEFAULT_SIGN, "a line that ends before it starts");
+    // The defaults reproduce the constants exactly.
+    assert.deepStrictEqual({ ...layout.DEFAULT_SIGN.screen }, { ...layout.SCREEN_RECT });
+    assert.strictEqual(layout.layoutLine(1.2, 3).titleX, layout.layoutLine(1.2, 3, layout.DEFAULT_SIGN).titleX);
+  });
+
+  it("reads a board, a line, colours and level glyphs, nothing else", () => {
+    const sign = layout.resolveSign({
+      screen: { x: 10, y: -40, w: 100, h: 40 },
+      line: { startX: 20, endX: 100, baselineY: -12, titleFontSize: 18, align: "center" },
+      titleColor: "#7D3D28",
+      feedbackColor: "javascript:alert(1)",
+      levels: { warn: { color: "#F8DB8E", glyph: "!" }, error: { glyph: "<script>" }, info: "nope" },
+    });
+    assert.deepStrictEqual({ ...sign.screen }, { x: 10, y: -40, w: 100, h: 40 });
+    assert.strictEqual(sign.line.align, "center");
+    assert.strictEqual(sign.line.promptFontSize, 18, "the prompt defaults to the title size");
+    assert.strictEqual(sign.titleColor, "#7D3D28");
+    assert.strictEqual(sign.feedbackColor, layout.LEVELS.success.color, "only hex colours are taken");
+    assert.deepStrictEqual({ ...sign.levels.warn }, { prompt: "!", color: "#F8DB8E" });
+    assert.deepStrictEqual({ ...sign.levels.error }, { ...layout.LEVELS.error }, "a long glyph is refused");
+    assert.deepStrictEqual({ ...sign.levels.info }, { ...layout.LEVELS.info });
+    assert.strictEqual(sign.leftHandDx, null, "no second hand: the board stays put");
+    assert.strictEqual(layout.signRect("left", sign), sign.screen);
+    assert.strictEqual(layout.resolveLevel("nope", sign), sign.levels.info);
+  });
+
+  it("centres a line that fits and starts an overflowing one at the left", () => {
+    const sign = layout.resolveSign({
+      screen: { x: 0, y: -40, w: 120, h: 40 },
+      line: { startX: 20, endX: 100, baselineY: -12, titleFontSize: 18, align: "center" },
+    });
+    const fits = layout.layoutLine(0, 40, sign);
+    near(fits.titleX, 40);
+    assert.strictEqual(fits.overflow, 0);
+    const long = layout.layoutLine(0, 130, sign);
+    assert.strictEqual(long.titleX, 20);
+    near(long.overflow, 50);
+  });
+
+  it("scrolls a bigger board's line at the same speed per letter", () => {
+    const sign = layout.resolveSign({
+      screen: { x: 0, y: -40, w: 120, h: 40 },
+      line: { startX: 20, endX: 100, baselineY: -12, titleFontSize: layout.TITLE_FONT_SIZE * 5 },
+    });
+    // Five times the font: five times the overflow for the same text, so a
+    // fifth of the time per unit.
+    assert.strictEqual(
+      layout.buildMarqueePlan(5 * 4, sign).scrollMs,
+      layout.buildMarqueePlan(4).scrollMs
+    );
+  });
+
+  it("gives calico a cat-eared bubble that zooms inside the window and its hit box", () => {
+    const sign = calicoSign();
+    assert.notStrictEqual(sign, layout.DEFAULT_SIGN, "calico's sign is valid");
+    const theme = calico();
+    const visible = calicoVisible();
+    const hit = theme.fileHitBoxes[CALICO_FILE];
+    const inside = (r, box) => r.x >= box.x - 1e-9 && r.y >= box.y - 1e-9
+      && r.x + r.w <= box.x + box.w + 1e-9 && r.y + r.h <= box.y + box.h + 1e-9;
+    const box = { x: hit.x, y: hit.y, w: hit.w, h: hit.h };
+    assert.ok(inside({ x: 80, y: 30, w: 106, h: 140 }, box), "the cat's body");
+    const cap = layout.maxZoomScale(sign.screen, visible);
+    for (const scale of [1, layout.HOVER_ZOOM_SCALE, cap]) {
+      const zoom = layout.computeZoomRect(sign.screen, scale, visible);
+      assert.ok(inside(zoom, visible), `${scale}× stays in the window`);
+      assert.ok(inside(zoom, box), `${scale}× is clickable`);
+    }
+    // The text line sits inside the bubble.
+    assert.ok(sign.line.startX > sign.screen.x && sign.line.endX < sign.screen.x + sign.screen.w);
+    assert.ok(sign.line.baselineY > sign.screen.y && sign.line.baselineY < sign.screen.y + sign.screen.h);
+  });
+});

@@ -4,6 +4,11 @@
   "author": "rullerzhou",
   "version": "1.0.0",
   "description": "A calico cat desk pet — AI-generated APNG animations",
+  "rendering": {
+    "objectChannelFiles": [
+      "calico-notice-screen.svg"
+    ]
+  },
   "customization": {
     "petTint": false
   },
@@ -24,6 +29,14 @@
     "baselineY": 170,
     "visibleHeightRatio": 0.35,
     "baselineBottomRatio": 0.05
+  },
+  "fileViewBoxes": {
+    "calico-notice-screen.svg": {
+      "x": -96,
+      "y": -266,
+      "width": 458,
+      "height": 460
+    }
   },
   "eyeTracking": {
     "enabled": true,
@@ -204,6 +217,14 @@
       "h": 160
     }
   },
+  "fileHitBoxes": {
+    "calico-notice-screen.svg": {
+      "x": -88,
+      "y": -162,
+      "w": 462,
+      "h": 332
+    }
+  },
   "wideHitboxFiles": [
     "calico-error.apng",
     "calico-notification.apng",
@@ -240,6 +261,44 @@
     "idle-look": {
       "file": "calico-idle.apng",
       "duration": 3000
+    },
+    "notice-screen": {
+      "file": "calico-notice-screen.svg",
+      "sign": {
+        "screen": {
+          "x": 22,
+          "y": -76,
+          "w": 218,
+          "h": 81
+        },
+        "line": {
+          "startX": 76,
+          "endX": 224,
+          "baselineY": -15,
+          "titleFontSize": 25,
+          "align": "center"
+        },
+        "titleColor": "#7D3D28",
+        "feedbackColor": "#7D3D28",
+        "levels": {
+          "info": {
+            "color": "#BFD8F2",
+            "glyph": "i"
+          },
+          "success": {
+            "color": "#C6E7C2",
+            "glyph": "✓"
+          },
+          "warn": {
+            "color": "#F8DB8E",
+            "glyph": "!"
+          },
+          "error": {
+            "color": "#F6B3A6",
+            "glyph": "×"
+          }
+        }
+      }
     }
   },
   "miniMode": {
@@ -326,7 +385,8 @@
       "calico-mini-peek.apng": 1.15,
       "calico-mini-crabwalk.apng": 1.05,
       "calico-mini-sleep.apng": 1.15,
-      "calico-roam-crabwalk.apng": 1.05
+      "calico-roam-crabwalk.apng": 1.05,
+      "calico-notice-screen.svg": 1.015
     },
     "fileOffsets": {
       "calico-idle-follow.svg": {
@@ -432,6 +492,10 @@
       "calico-mini-sleep.apng": {
         "x": 0,
         "y": 65
+      },
+      "calico-notice-screen.svg": {
+        "x": -5,
+        "y": -5
       }
     }
   }
