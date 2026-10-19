@@ -294,6 +294,19 @@ body[data-tail="right"] { --gutter-right: 20px; }
 }
 .card[data-expandable="true"] { cursor: zoom-in; }
 
+/* A pose card's chalkboard, where a little figure acts the notice out. A
+   click on the card plays it again. */
+.pose-stage {
+  display: block;
+  width: 100%;
+  max-width: 232px;
+  height: auto;
+  aspect-ratio: 22 / 20;
+  margin-top: 6px;
+  border-radius: 4px;
+}
+.card[data-pose="true"] { cursor: pointer; }
+
 /* One row per trend series: name, sparkline, current reading. */
 .series {
   display: flex;
@@ -383,6 +396,56 @@ body[data-tail="right"] { --gutter-right: 20px; }
 .card-dismiss:hover {
   background: var(--dismiss-hover-bg);
   color: var(--text-main);
+}
+
+/* ── Stretch card (src/stretch-runtime.js) ────────────────────────────────
+   The follow-along break: the bean on its chalkboard, the spoken cue, the
+   move's hint, one pill per move and the controls. Same card shell as a
+   notice, so every style dresses it. */
+.stretch-card { cursor: default; }
+.stretch-card .title { display: flex; align-items: baseline; gap: 6px; }
+.stretch-card .stretch-title-text { flex: 1 1 auto; min-width: 0; }
+.stretch-card .stretch-count {
+  flex: 0 0 auto; margin-left: auto; font-size: 11.5px; font-weight: 600;
+  color: var(--text-muted); white-space: nowrap; font-variant-numeric: tabular-nums;
+}
+.stretch-card .stretch-count:empty { display: none; }
+.stretch-stage {
+  display: block; width: 100%; max-width: 252px; height: auto; aspect-ratio: 22 / 20;
+  margin: 4px 0 0; border-radius: 4px; box-shadow: 0 0 0 2px #000;
+}
+.stretch-card[data-phase="invite"] .stretch-stage,
+.stretch-card[data-phase="done"] .stretch-stage,
+.stretch-card[data-phase="early"] .stretch-stage { max-width: 190px; }
+.stretch-cue {
+  font: 400 15px/1.35 "Notice KuaiLe", -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  color: var(--header-color); min-height: 20px; overflow-wrap: anywhere;
+}
+.stretch-cue:empty { display: none; }
+.stretch-card .body:empty { display: none; }
+.stretch-note { font-size: 11px; line-height: 1.45; color: var(--text-muted); }
+.stretch-note:empty { display: none; }
+.stretch-pills { display: flex; gap: 4px; margin-top: 2px; }
+.stretch-pills:empty { display: none; }
+.stretch-pills i { flex: 1; height: 7px; border: 1.5px solid #1a1a1f; border-radius: 4px; background: #FFF7EE; }
+.stretch-pills i.done { background: #6EE19A; }
+.stretch-pills i.now { background: #FFC857; }
+.stretch-pills i.skip { background: #d9cbbd; border-style: dashed; }
+.stretch-buttons { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 4px; }
+.stretch-buttons:empty { display: none; }
+.stretch-btn {
+  font: 600 12.5px/1 -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  padding: 7px 11px; border: 2px solid #000; border-radius: 6px; background: #FFF7EE; color: #1a1a1f;
+  cursor: pointer; box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.25);
+}
+.stretch-btn.primary { background: #2F4A3A; color: #F2F2E6; }
+.stretch-btn:hover { transform: translate(-1px, -1px); box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.25); }
+.stretch-btn:active { transform: translate(1px, 1px); box-shadow: 1px 1px 0 rgba(0, 0, 0, 0.25); }
+.stretch-card .card-dismiss { opacity: 0.55; }
+body[data-notice-style="pixel"] .stretch-card .skin-more { display: none; }
+body[data-notice-style="pixel"] .stretch-btn { border-radius: 0; }
+@media (prefers-reduced-motion: reduce) {
+  .stretch-btn:hover, .stretch-btn:active { transform: none; }
 }
 
 /* ── Notice styles ──────────────────────────────────────────────────────────
@@ -787,6 +850,311 @@ function buildTail() {
   return svg;
 }
 
+// ── Pose cards: a little bean figure acting something out on a chalkboard ──
+// The store has already normalized the animation (src/notice-pose.js): every
+// frame is a complete pose of clamped numbers and known enum values. This
+// code only interpolates and draws; nothing from it reaches the HTML parser.
+const POSE_CHALK = "#F2F2E6";
+const POSE_BOARD = "#2F4A3A";
+const POSE_FILL = "#B9A7F2";
+const POSE_LINE = "#4B3F78";
+const POSE_INK = "#2E2552";
+const POSE_CHEEK = "#FF9DC4";
+const POSE_EXPRESSIONS = ["smile", "happy", "surprised", "wink", "sad", "closed"];
+// The bean's proportions, in figure units (hip at 0,0, y down).
+const BEAN = { torso: 2.4, headR: 1.2, neck: 0.1, shoulder: 1.25, neckDown: 0.9, hip: 0.6,
+  upper: 1.5, fore: 1.3, thigh: 1.55, shin: 1.4 };
+const POSE_GROUND_Y = 4.3;
+const POSE_SCALE = 1.35;
+let poseClipSeq = 0;
+
+function svgEl(tag, attrs, parent) {
+  const node = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs || {})) node.setAttribute(k, String(v));
+  if (parent) parent.appendChild(node);
+  return node;
+}
+const pRad = (d) => d * Math.PI / 180;
+function pRot(p, deg) {
+  const r = pRad(deg);
+  return [p[0] * Math.cos(r) - p[1] * Math.sin(r), p[0] * Math.sin(r) + p[1] * Math.cos(r)];
+}
+const pAdd = (a, b) => [a[0] + b[0], a[1] + b[1]];
+const pSub = (a, b) => [a[0] - b[0], a[1] - b[1]];
+const pMul = (a, k) => [a[0] * k, a[1] * k];
+const pLen = (a) => Math.hypot(a[0], a[1]);
+const pf = (v) => (+v).toFixed(3);
+
+function poseMix(p, q, k) {
+  const lerp = (a, b) => a + (b - a) * k;
+  const pair = (a, b) => [lerp(a[0], b[0]), lerp(a[1], b[1])];
+  return {
+    torso: lerp(p.torso, q.torso), head: lerp(p.head, q.head), lift: lerp(p.lift, q.lift),
+    arms: { l: pair(p.arms.l, q.arms.l), r: pair(p.arms.r, q.arms.r) },
+    legs: { l: pair(p.legs.l, q.legs.l), r: pair(p.legs.r, q.legs.r) },
+    root: { dx: lerp(p.root.dx, q.root.dx), dy: lerp(p.root.dy, q.root.dy), rot: lerp(p.root.rot, q.root.rot) },
+    face: k < 0.5 ? p.face : q.face, prop: k < 0.5 ? p.prop : q.prop,
+  };
+}
+function poseCycleMs(anim) {
+  let t = 0;
+  for (let i = 1; i < anim.frames.length; i++) t += anim.frames[i].ms;
+  return t + (anim.loop ? anim.frames[0].ms : anim.hold);
+}
+// Each frame's ms is how long the move into it takes; a loop also moves from
+// the last frame back to the first.
+function poseAt(anim, t) {
+  const F = anim.frames;
+  if (F.length === 1) return F[0].pose;
+  let u = anim.loop ? t % poseCycleMs(anim) : Math.min(t, poseCycleMs(anim));
+  const segs = [];
+  for (let i = 1; i < F.length; i++) segs.push([F[i - 1].pose, F[i].pose, F[i].ms]);
+  if (anim.loop) segs.push([F[F.length - 1].pose, F[0].pose, F[0].ms]);
+  for (const [a, b, ms] of segs) {
+    if (u <= ms) return poseMix(a, b, (1 - Math.cos((u / ms) * Math.PI)) / 2);
+    u -= ms;
+  }
+  return F[F.length - 1].pose;
+}
+// Pose → board-space points: mirrored for a side view facing left, turned
+// about the feet and moved by root.
+function poseSkeleton(p, anim) {
+  const P = BEAN;
+  const side = anim.view === "side";
+  const m = side && anim.facing === "left" ? -1 : 1;
+  const pivot = [0, P.thigh + P.shin];
+  const W = (pt) => pAdd(pAdd(pRot(pSub([pt[0] * m, pt[1]], pivot), p.root.rot), pivot), [p.root.dx, p.root.dy]);
+  const neck = pRot([0, -P.torso], p.torso);
+  const top = pAdd(neck, pRot([0, p.lift * 0.35], p.torso));
+  const headDir = p.torso + p.head;
+  const head = pAdd(pAdd(neck, pRot([0, -P.neck], headDir)), pRot([0, -P.headR * 0.92], headDir));
+  const sk = { side, mirror: m, face: p.face, prop: p.prop, hip: W([0, 0]), head: W(head),
+    torsoAngle: p.torso * m + p.root.rot, headAngle: headDir * m + p.root.rot, arm: {}, leg: {} };
+  for (const [k, s] of [["l", -1], ["r", 1]]) {
+    const sx = side ? 1 : s;
+    const sh = pAdd(top, pRot([side ? 0 : s * P.shoulder, P.neckDown - p.lift * 0.65], p.torso));
+    const dir = (deg) => pRot([sx * Math.sin(pRad(deg)), Math.cos(pRad(deg))], p.torso);
+    const elbow = pAdd(sh, pMul(dir(p.arms[k][0]), P.upper));
+    const hand = pAdd(elbow, pMul(dir(p.arms[k][1]), P.fore));
+    const hip = [side ? 0 : s * P.hip, 0];
+    const ldir = (deg) => [sx * Math.sin(pRad(deg)), Math.cos(pRad(deg))];
+    const knee = pAdd(hip, pMul(ldir(p.legs[k][0]), P.thigh));
+    const foot = pAdd(knee, pMul(ldir(p.legs[k][1]), P.shin));
+    const far = side && k === "l";
+    sk.arm[k] = { pts: [W(sh), W(elbow), W(hand)], far };
+    sk.leg[k] = { pts: [W(hip), W(knee), W(foot)], far };
+  }
+  return sk;
+}
+
+// The bean's face, in head-local units (radius 1): one set per view and
+// expression, switched by visibility.
+function buildPoseFace(parent) {
+  const root = svgEl("g", {}, parent);
+  const views = {};
+  for (const view of ["front", "side"]) {
+    const g = svgEl("g", {}, root);
+    const eyes = view === "side" ? [0.42] : [-0.36, 0.36];
+    const mx = view === "side" ? 0.52 : 0;
+    const mw = view === "side" ? 0.16 : 0.26;
+    const ink = { stroke: POSE_INK, "stroke-width": 0.18, fill: "none", "stroke-linecap": "round" };
+    for (const cx of view === "side" ? [0.24] : [-0.54, 0.54]) {
+      svgEl("ellipse", { cx, cy: 0.3, rx: 0.22, ry: 0.13, fill: POSE_CHEEK, opacity: 0.85 }, g);
+    }
+    const faces = {};
+    for (const name of POSE_EXPRESSIONS) {
+      const f = svgEl("g", { visibility: "hidden" }, g);
+      eyes.forEach((cx, i) => {
+        const last = i === eyes.length - 1;
+        if (name === "happy" || (name === "wink" && last)) svgEl("path", { d: `M${cx - 0.17} 0 q0.17 -0.24 0.34 0`, ...ink }, f);
+        else if (name === "closed") svgEl("path", { d: `M${cx - 0.18} -0.07 q0.18 0.18 0.36 0`, ...ink }, f);
+        else svgEl("circle", { cx, cy: -0.08, r: name === "surprised" ? 0.19 : 0.14, fill: POSE_INK }, f);
+        if (name === "sad") svgEl("line", { x1: cx - 0.2, y1: -0.36 + (cx < 0 ? 0.08 : 0), x2: cx + 0.18, y2: -0.36 + (cx < 0 ? 0 : 0.08), ...ink }, f);
+      });
+      if (name === "happy") svgEl("path", { d: `M${mx - mw} 0.24 h${mw * 2} q${-mw} 0.42 ${-mw * 2} 0 Z`, fill: POSE_INK }, f);
+      else if (name === "surprised") svgEl("ellipse", { cx: mx, cy: 0.42, rx: 0.13, ry: 0.18, ...ink }, f);
+      else if (name === "sad") svgEl("path", { d: `M${mx - mw * 0.9} 0.5 q${mw * 0.9} -0.22 ${mw * 1.8} 0`, ...ink }, f);
+      else svgEl("path", { d: `M${mx - mw} 0.3 q${mw} 0.24 ${mw * 2} 0`, ...ink }, f);
+      faces[name] = f;
+    }
+    views[view] = { g, faces };
+  }
+  return (sk) => {
+    root.setAttribute("transform", `translate(${pf(sk.head[0])} ${pf(sk.head[1])}) rotate(${pf(sk.headAngle)}) scale(${pf(1.25 * sk.mirror)} 1.25)`);
+    for (const [view, v] of Object.entries(views)) {
+      v.g.setAttribute("visibility", (view === "side") === sk.side ? "visible" : "hidden");
+      for (const [name, f] of Object.entries(v.faces)) f.setAttribute("visibility", name === sk.face ? "inherit" : "hidden");
+    }
+  };
+}
+
+// The little extras around the head: ♥ ? ! a sweat drop, ♪, dizzy stars, z.
+function buildPoseProps(parent) {
+  const g = svgEl("g", {}, parent);
+  const text = (txt, fill, size) => {
+    const t = svgEl("text", { "font-size": size, fill, "text-anchor": "middle", visibility: "hidden",
+      "font-family": "'Notice KuaiLe', 'Microsoft YaHei', sans-serif" }, g);
+    t.textContent = txt;
+    return t;
+  };
+  const items = { heart: text("♥", "#FF8FA3", 2.4), question: text("?", POSE_CHALK, 2.4), exclaim: text("!", "#FFC857", 2.6),
+    note: text("♪", POSE_CHALK, 2.0), zzz: text("z", POSE_CHALK, 1.6),
+    sweat: svgEl("path", { d: "M0 -0.6 q0.45 0.6 0 0.95 q-0.45 -0.35 0 -0.95 Z", fill: "#9ED8FF", visibility: "hidden" }, g),
+    star: svgEl("g", { visibility: "hidden" }, g) };
+  const stars = [0, 1, 2].map(() => text("★", "#FFC857", 1.1));
+  stars.forEach((s) => items.star.appendChild(s));
+  const at = (n, x, y) => {
+    if (n.tagName === "text") { n.setAttribute("x", pf(x)); n.setAttribute("y", pf(y)); }
+    else n.setAttribute("transform", `translate(${pf(x)} ${pf(y)})`);
+  };
+  return (sk, now) => {
+    for (const [k, n] of Object.entries(items)) n.setAttribute("visibility", k === sk.prop ? "visible" : "hidden");
+    if (!sk.prop) return;
+    const [hx, hy] = sk.head;
+    const R = BEAN.headR;
+    const out = sk.mirror;
+    const bob = Math.sin(now / 260) * 0.25;
+    if (sk.prop === "heart") at(items.heart, hx, hy - R - 0.9 + bob);
+    if (sk.prop === "question" || sk.prop === "exclaim") at(items[sk.prop], hx + out * (R + 0.7), hy - R * 0.35 + bob * 0.5);
+    if (sk.prop === "sweat") at(items.sweat, hx + out * (R * 0.95), hy - R * 0.25 + ((now / 900) % 1) * 0.6);
+    if (sk.prop === "note") at(items.note, hx + out * (R + 0.9), hy - R * 0.6 - ((now / 1200) % 1) * 1.2);
+    if (sk.prop === "zzz") at(items.zzz, hx + out * (R + 0.4), hy - R * 0.4 + bob);
+    if (sk.prop === "star") stars.forEach((s, i) => {
+      const t = now / 500 + (i * 2 * Math.PI) / 3;
+      at(s, hx + Math.cos(t) * (R + 0.6), hy - R * 0.7 + Math.sin(t) * 0.55);
+    });
+  };
+}
+// One chalkboard with the bean on it. Returns { svg, draw(pose, anim, now) }.
+function buildPoseBoard() {
+  const svg = svgEl("svg", { class: "pose-stage", viewBox: "-11 -14.5 22 20", "aria-hidden": "true" });
+  svgEl("rect", { x: -11, y: -14.5, width: 22, height: 20, fill: "#8B5A2B", rx: 0.4 }, svg);
+  const slate = { x: -10.4, y: -13.9, width: 20.8, height: 18.8 };
+  svgEl("rect", { ...slate, fill: POSE_BOARD }, svg);
+  const clipId = "pose-clip-" + (++poseClipSeq);
+  svgEl("rect", slate, svgEl("clipPath", { id: clipId }, svgEl("defs", {}, svg)));
+  const clip = svgEl("g", { "clip-path": `url(#${clipId})` }, svg);
+  svgEl("line", { x1: -4, y1: POSE_GROUND_Y + 0.45, x2: 4, y2: POSE_GROUND_Y + 0.45, stroke: POSE_CHALK,
+    "stroke-width": 0.3, opacity: 0.4, "stroke-linecap": "round" }, clip);
+  // The bean is short: drawn larger so it fills the board.
+  const place = svgEl("g", { transform: `translate(0 ${pf(POSE_GROUND_Y - (BEAN.thigh + BEAN.shin) * POSE_SCALE)}) scale(${POSE_SCALE})` }, clip);
+  const body = svgEl("g", { "stroke-linecap": "round", "stroke-linejoin": "round", fill: "none" }, place);
+  const layers = {};
+  for (const name of ["back", "legs", "torso", "arms", "head", "props"]) layers[name] = svgEl("g", {}, body);
+  const limbs = {};
+  for (const kind of ["arm", "leg"]) for (const k of ["l", "r"]) {
+    const g = svgEl("g", {}, layers[kind === "arm" ? "arms" : "legs"]);
+    limbs[kind + k] = { g, home: layers[kind === "arm" ? "arms" : "legs"],
+      paths: [svgEl("path", { stroke: POSE_LINE, "stroke-width": 1.05 }, g), svgEl("path", { stroke: POSE_FILL, "stroke-width": 0.7 }, g)] };
+  }
+  const outline = svgEl("line", { stroke: POSE_LINE, "stroke-width": 3.75 }, layers.torso);
+  const bean = svgEl("line", { stroke: POSE_FILL, "stroke-width": 3.3 }, layers.torso);
+  const shine = svgEl("ellipse", { rx: 0.32, ry: 0.55, fill: "#FFFFFF", opacity: 0.45 }, layers.torso);
+  const face = buildPoseFace(layers.head);
+  const props = buildPoseProps(layers.props);
+  const setLine = (n, a, b) => {
+    n.setAttribute("x1", pf(a[0])); n.setAttribute("y1", pf(a[1]));
+    n.setAttribute("x2", pf(b[0])); n.setAttribute("y2", pf(b[1]));
+  };
+  return {
+    svg,
+    draw(pose, anim, now) {
+      const sk = poseSkeleton(pose, anim);
+      for (const kind of ["arm", "leg"]) for (const k of ["l", "r"]) {
+        const limb = limbs[kind + k];
+        const j = sk[kind][k];
+        // In a side view the far arm and leg go behind the body, dimmed.
+        const parent = j.far ? layers.back : limb.home;
+        if (limb.g.parentNode !== parent) parent.appendChild(limb.g);
+        limb.g.setAttribute("opacity", j.far ? "0.5" : "1");
+        const [a, b, c] = j.pts;
+        const d = `M${pf(a[0])} ${pf(a[1])} L${pf(b[0])} ${pf(b[1])} L${pf(c[0])} ${pf(c[1])}`;
+        for (const path of limb.paths) path.setAttribute("d", d);
+      }
+      const axis = pSub(sk.head, sk.hip);
+      const u = pMul(axis, 1 / (pLen(axis) || 1));
+      const from = pAdd(sk.hip, pMul(u, -0.2));
+      const to = pAdd(sk.head, pMul(u, 0.05));
+      setLine(outline, from, to);
+      setLine(bean, from, to);
+      const sp = pAdd(sk.head, pRot([-0.65 * BEAN.headR * sk.mirror, -0.45 * BEAN.headR], sk.headAngle));
+      shine.setAttribute("cx", pf(sp[0])); shine.setAttribute("cy", pf(sp[1]));
+      shine.setAttribute("transform", `rotate(${pf(sk.torsoAngle + 20)} ${pf(sp[0])} ${pf(sp[1])})`);
+      face(sk);
+      props(sk, now);
+    },
+  };
+}
+
+// Every pose stage on screen, driven by one animation loop. A stage whose
+// card has left the page drops out on the next frame.
+const poseStages = new Set();
+let poseFrame = null;
+// Under reduced motion a stage shows a still until it is clicked, then plays
+// one cycle (looping or not) and goes back to the still.
+function poseStageMoving(stage, now) {
+  if (!prefersReducedMotion()) return true;
+  return stage.playUntil > now;
+}
+function tickPoseStages(now) {
+  poseFrame = null;
+  let moving = false;
+  for (const stage of poseStages) {
+    if (!stage.board.svg.isConnected) { poseStages.delete(stage); continue; }
+    const live = poseStageMoving(stage, now);
+    moving = moving || live;
+    // A one-shot plays once and rests on its last frame until clicked.
+    stage.board.draw(poseAt(stage.anim, live ? now - stage.startedAt : stage.still), stage.anim, live ? now : 0);
+  }
+  if (moving) poseFrame = requestAnimationFrame(tickPoseStages);
+}
+function startPoseLoop() {
+  if (poseFrame === null) poseFrame = requestAnimationFrame(tickPoseStages);
+}
+// The system setting (or Clawd's "animate anyway" override) can flip while a
+// card is up; a still stage then starts moving without a click.
+if (window.matchMedia) {
+  const motionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+  if (typeof motionQuery.addEventListener === "function") motionQuery.addEventListener("change", startPoseLoop);
+}
+// The frame a reduced-motion stage shows: the most-changed one, so the still
+// still says what the move is.
+function poseStillTime(anim) {
+  let t = 0;
+  let best = 0;
+  let bestAt = 0;
+  for (let i = 1; i < anim.frames.length; i++) {
+    t += anim.frames[i].ms;
+    const p = anim.frames[i].pose;
+    const score = Math.abs(p.torso) + Math.abs(p.head) + Math.abs(p.root.rot) + Math.abs(p.root.dy) * 20
+      + Math.abs(p.arms.l[0]) + Math.abs(p.arms.r[0]) + Math.abs(p.legs.l[0]) + Math.abs(p.legs.r[0]);
+    if (score > best) { best = score; bestAt = t; }
+  }
+  return bestAt;
+}
+function buildPoseStage(anim) {
+  const board = buildPoseBoard();
+  const stage = { board, anim, startedAt: performance.now(), still: poseStillTime(anim), playUntil: 0 };
+  poseStages.add(stage);
+  board.draw(poseAt(anim, prefersReducedMotion() ? stage.still : 0), anim, 0);
+  startPoseLoop();
+  return stage;
+}
+function isPoseNotice(notice) {
+  return !!(notice && notice.kind === "pose" && notice.pose && Array.isArray(notice.pose.frames) && notice.pose.frames.length);
+}
+// A click on a pose card plays its animation again — also under reduced
+// motion, where it then plays one cycle.
+function replayPose(card) {
+  const now = performance.now();
+  for (const stage of poseStages) {
+    if (!card.contains(stage.board.svg)) continue;
+    stage.startedAt = now;
+    stage.playUntil = now + poseCycleMs(stage.anim);
+  }
+  startPoseLoop();
+}
+
 // The card's text block: the level glyph prefixed to whichever line leads, the
 // title, and then either the trend rows or the body. Split out of buildCard so
 // an in-place update can rebuild exactly this and nothing else.
@@ -844,7 +1212,16 @@ function buildCopy(notice, level) {
     if (!firstLine) firstLine = img;
   }
 
-  if (firstLine && firstLine.tagName !== "IMG") firstLine.insertBefore(buildLevelGlyph(level), firstLine.firstChild);
+  // A pose card's chalkboard. Built from the store's normalized numbers only.
+  if (!series.length && isPoseNotice(notice)) {
+    const stage = buildPoseStage(notice.pose);
+    copy.appendChild(stage.board.svg);
+    if (!firstLine) firstLine = stage.board.svg;
+  }
+
+  if (firstLine && firstLine.tagName !== "IMG" && firstLine.tagName !== "svg") {
+    firstLine.insertBefore(buildLevelGlyph(level), firstLine.firstChild);
+  }
   return copy;
 }
 
@@ -888,6 +1265,7 @@ function buildCard(notice) {
   card.dataset.level = level;
   card.dataset.kind = notice && notice.kind === "trend" ? "trend" : "text";
   card.dataset.expandable = isExpandable(notice) ? "true" : "false";
+  card.dataset.pose = isPoseNotice(notice) ? "true" : "false";
 
   const bar = document.createElement("div");
   bar.className = "level-bar";
@@ -908,9 +1286,11 @@ function buildCard(notice) {
   // The flag is read back off the element rather than captured here, so an
   // in-place update that adds or drops the picture changes what a click does
   // by rewriting that one attribute.
+  // A pose card's click plays the animation again (its × still dismisses).
   card.addEventListener("click", () => {
     if (!id) return;
-    if (card.dataset.expandable === "true") window.noticeBubbleAPI.expand(id);
+    if (card.dataset.pose === "true") replayPose(card);
+    else if (card.dataset.expandable === "true") window.noticeBubbleAPI.expand(id);
     else window.noticeBubbleAPI.dismiss(id);
   });
 
@@ -950,6 +1330,8 @@ function contentSignature(notice) {
     notice.kind || "",
     Array.isArray(notice.series) ? notice.series : [],
     imageFingerprint(notice),
+    // A pose is a few dozen numbers: compared whole, so a re-push replays.
+    isPoseNotice(notice) ? notice.pose : null,
   ]);
 }
 
@@ -964,6 +1346,7 @@ function updateCard(element, notice) {
   element.dataset.level = level;
   element.dataset.kind = notice && notice.kind === "trend" ? "trend" : "text";
   element.dataset.expandable = isExpandable(notice) ? "true" : "false";
+  element.dataset.pose = isPoseNotice(notice) ? "true" : "false";
   const copy = element.querySelector(".copy");
   if (copy) copy.replaceWith(buildCopy(notice, level));
 }
@@ -1102,6 +1485,470 @@ function applyPresentation(elements, side) {
   // The stack's own gutter opens on this side to hold the tail; without it the
   // scroll container would clip the circles off.
   document.body.dataset.tail = side;
+}
+
+// ── Stretch card ──────────────────────────────────────────────────────────
+// The follow-along break from src/stretch-runtime.js. Main owns the timeline
+// and sends a new payload at every segment change and pause / resume; this
+// page animates the figure in between. The board is the pose board above
+// plus the follow-along layer: the move name and side, a countdown ring, a
+// breathing dot, "2 / 6", chalk marks that ride the figure, and a centred
+// message ("Next", "Switch", "Paused"). Strings arrive final; every one is
+// written with textContent. Numbers come from the pose normalizer.
+const STRETCH_YELLOW = "#FFC857";
+const STRETCH_BLUE = "#9ED8FF";
+const STRETCH_FONT = "'Notice KuaiLe', 'Microsoft YaHei', sans-serif";
+const STRETCH_RING_R = 1.9;
+const STRETCH_RING_C = [7.9, -11.3];
+const STRETCH_RING_LEN = 2 * Math.PI * STRETCH_RING_R;
+const STRETCH_ACTIONS = new Set(["start", "later", "skipToday", "pause", "resume", "skip", "end", "ok"]);
+let stretchEl = null;
+let stretchView = null;
+let stretchFrame = null;
+
+function stretchText(parent, attrs, content) {
+  const node = svgEl("text", { "font-family": STRETCH_FONT, fill: POSE_CHALK, ...attrs }, parent);
+  node.textContent = content || "";
+  return node;
+}
+const stretchEase = (k) => (1 - Math.cos(Math.max(0, Math.min(1, k)) * Math.PI)) / 2;
+
+// Chalk marks, drawn in the figure's own coordinates so they follow its hands
+// and feet. Each mark type is built once and moved every frame.
+function buildStretchMarks(place) {
+  const g = svgEl("g", { fill: "none", stroke: POSE_CHALK, "stroke-linecap": "round", "stroke-linejoin": "round" }, place);
+  const pool = new Map();
+  const get = (key, make) => {
+    if (!pool.has(key)) pool.set(key, make());
+    const n = pool.get(key);
+    n.used = true;
+    return n;
+  };
+  const arrowHead = (parent) => svgEl("path", { d: "M-0.28 -0.22 L0.12 0 L-0.28 0.22", "stroke-width": 0.13 }, parent);
+  const point = (sk, at) => {
+    const [kind, side] = String(at || "hand.r").split(".");
+    const limb = kind === "hand" ? sk.arm[side] : sk.leg[side];
+    return limb ? limb.pts[2] : sk.hip;
+  };
+  return function draw(sk, marks, extra) {
+    for (const n of pool.values()) n.used = false;
+    (marks || []).forEach((m, i) => {
+      const key = m.type + i;
+      if (m.type === "spin") {
+        const n = get(key, () => {
+          const w = svgEl("g", { opacity: 0.85 }, g);
+          svgEl("circle", { r: 0.82, "stroke-width": 0.1, "stroke-dasharray": "0.32 0.26" }, w);
+          const head = svgEl("g", {}, w);
+          arrowHead(head);
+          return { el: w, head };
+        });
+        const [x, y] = point(sk, m.at);
+        const dir = (m.dir || 1) * (extra.reverse ? -1 : 1);
+        const a = (extra.now / 520) * dir;
+        n.el.setAttribute("transform", `translate(${pf(x)} ${pf(y)})`);
+        const hx = Math.cos(a) * 0.82;
+        const hy = Math.sin(a) * 0.82;
+        const tangent = (Math.atan2(hy, hx) * 180) / Math.PI + (dir > 0 ? 90 : -90);
+        n.head.setAttribute("transform", `translate(${pf(hx)} ${pf(hy)}) rotate(${pf(tangent)})`);
+      } else if (m.type === "twist") {
+        const n = get(key, () => {
+          const w = svgEl("g", { opacity: 0.85 }, g);
+          const arc = svgEl("path", { "stroke-width": 0.13 }, w);
+          const head = svgEl("g", {}, w);
+          arrowHead(head);
+          return { el: w, arc, head };
+        });
+        const cx = sk.hip[0];
+        const cy = sk.hip[1] - 0.45;
+        const d = m.dir || 1;
+        n.arc.setAttribute("d", `M${pf(cx - 2.3 * d)} ${pf(cy - 0.15)} A2.3 0.75 0 0 ${d > 0 ? 0 : 1} ${pf(cx + 2.3 * d)} ${pf(cy - 0.15)}`);
+        n.head.setAttribute("transform", `translate(${pf(cx + 2.3 * d)} ${pf(cy - 0.15)}) rotate(${d > 0 ? -70 : -110})`);
+      } else if (m.type === "palm") {
+        const n = get(key, () => {
+          const w = svgEl("g", { opacity: 0.9 }, g);
+          const fingers = svgEl("path", { "stroke-width": 0.16 }, w);
+          const pull = svgEl("path", { "stroke-width": 0.1, "stroke-dasharray": "0.25 0.2", stroke: STRETCH_YELLOW }, w);
+          const head = svgEl("g", { stroke: STRETCH_YELLOW }, w);
+          arrowHead(head);
+          return { el: w, fingers, pull, head };
+        });
+        const [x, y] = point(sk, m.at);
+        const up = extra.half === 0 ? -1 : 1;
+        n.el.setAttribute("transform", `translate(${pf(x)} ${pf(y)}) scale(${sk.mirror} 1)`);
+        n.fingers.setAttribute("d", `M0.45 0 L0.45 ${pf(0.95 * up)}`);
+        n.pull.setAttribute("d", `M1.0 ${pf(0.85 * up)} Q1.1 ${pf(1.55 * up)} 0.25 ${pf(1.45 * up)}`);
+        n.head.setAttribute("transform", `translate(0.25 ${pf(1.45 * up)}) rotate(180)`);
+      } else if (m.type === "fist") {
+        const n = get(key, () => {
+          const w = svgEl("g", {}, g);
+          const dot = svgEl("circle", { r: 0.5, fill: POSE_CHALK, stroke: "none", opacity: 0.9 }, w);
+          const rays = svgEl("g", { "stroke-width": 0.11, opacity: 0.85 }, w);
+          for (let k = 0; k < 5; k++) {
+            const a = (-150 + k * 30) * Math.PI / 180;
+            svgEl("line", { x1: pf(Math.cos(a) * 0.55), y1: pf(Math.sin(a) * 0.55), x2: pf(Math.cos(a) * 1.05), y2: pf(Math.sin(a) * 1.05) }, rays);
+          }
+          return { el: w, dot, rays };
+        });
+        const [x, y] = point(sk, m.at);
+        const side = String(m.at || "").endsWith(".l") ? -1 : 1;
+        n.el.setAttribute("transform", `translate(${pf(x)} ${pf(y)}) rotate(${side * 60})`);
+        const fist = extra.hand === "fist";
+        n.dot.setAttribute("visibility", fist ? "visible" : "hidden");
+        n.rays.setAttribute("visibility", fist ? "hidden" : "visible");
+      } else if (m.type === "shake") {
+        const n = get(key, () => {
+          const w = svgEl("g", { "stroke-width": 0.1 }, g);
+          svgEl("path", { d: "M-0.9 -0.5 q-0.3 0.5 0 1" }, w);
+          svgEl("path", { d: "M0.9 -0.5 q0.3 0.5 0 1" }, w);
+          return { el: w };
+        });
+        const [x, y] = point(sk, m.at);
+        n.el.setAttribute("transform", `translate(${pf(x)} ${pf(y + 0.2)})`);
+        n.el.setAttribute("opacity", pf(0.45 + 0.4 * Math.abs(Math.sin(extra.now / 90))));
+      } else if (m.type === "rise" || m.type === "shrug") {
+        const n = get(key, () => {
+          const w = svgEl("g", { "stroke-width": 0.12 }, g);
+          const arrows = [0, 1].map(() => {
+            const a = svgEl("g", {}, w);
+            svgEl("line", { x1: 0, y1: 0.45, x2: 0, y2: -0.45 }, a);
+            svgEl("path", { d: "M-0.28 -0.15 L0 -0.48 L0.28 -0.15" }, a);
+            return a;
+          });
+          return { el: w, arrows };
+        });
+        const amount = m.type === "rise" ? Math.min(1, -extra.pose.root.dy / 0.3) : Math.min(1, extra.pose.lift / 1.0);
+        n.el.setAttribute("opacity", pf(Math.max(0, amount) * 0.9));
+        ["l", "r"].forEach((k, j) => {
+          const [x, y] = m.type === "rise" ? sk.leg[k].pts[2] : sk.arm[k].pts[0];
+          const dx = m.type === "rise" ? 0.85 : 1.0;
+          const dy = m.type === "rise" ? -0.1 : -0.9;
+          n.arrows[j].setAttribute("transform", `translate(${pf(x + (k === "l" ? -dx : dx))} ${pf(y + dy)})`);
+        });
+      } else if (m.type === "desk") {
+        const n = get(key, () => {
+          const w = svgEl("g", { "stroke-width": 0.14, opacity: 0.6 }, g);
+          return { el: w, top: svgEl("line", {}, w), leg: svgEl("line", {}, w) };
+        });
+        const [x, y] = point(sk, m.at);
+        const s = sk.mirror;
+        const ty = y + 0.55;
+        const groundY = BEAN.thigh + BEAN.shin + 0.33;
+        n.top.setAttribute("x1", pf(x - 0.4 * s)); n.top.setAttribute("x2", pf(x + 2.6 * s));
+        n.top.setAttribute("y1", pf(ty)); n.top.setAttribute("y2", pf(ty));
+        n.leg.setAttribute("x1", pf(x + 2.2 * s)); n.leg.setAttribute("x2", pf(x + 2.2 * s));
+        n.leg.setAttribute("y1", pf(ty)); n.leg.setAttribute("y2", pf(groundY));
+      }
+    });
+    for (const n of pool.values()) n.el.setAttribute("visibility", n.used ? "visible" : "hidden");
+  };
+}
+
+// The board: the pose board plus the follow-along layer on top.
+function buildStretchBoard() {
+  const board = buildPoseBoard();
+  const svg = board.svg;
+  svg.setAttribute("class", "stretch-stage");
+  const clip = svg.querySelector("g[clip-path]");
+  const place = clip.lastChild;
+  const drawMarks = buildStretchMarks(place);
+  const ui = svgEl("g", {}, svg);
+  const name = stretchText(ui, { x: -9.3, y: -11.25, "font-size": 2.1 });
+  const tag = stretchText(ui, { x: -9.3, y: -9.25, "font-size": 1.35, fill: STRETCH_YELLOW });
+  const ring = svgEl("g", {}, ui);
+  svgEl("circle", { cx: STRETCH_RING_C[0], cy: STRETCH_RING_C[1], r: STRETCH_RING_R, fill: "none", stroke: POSE_CHALK, "stroke-width": 0.32, opacity: 0.22 }, ring);
+  const arc = svgEl("circle", { cx: STRETCH_RING_C[0], cy: STRETCH_RING_C[1], r: STRETCH_RING_R, fill: "none", stroke: STRETCH_YELLOW, "stroke-width": 0.36,
+    "stroke-linecap": "round", "stroke-dasharray": `${pf(STRETCH_RING_LEN)} ${pf(STRETCH_RING_LEN)}`,
+    transform: `rotate(-90 ${STRETCH_RING_C[0]} ${STRETCH_RING_C[1]})` }, ring);
+  const num = stretchText(ring, { x: STRETCH_RING_C[0], y: STRETCH_RING_C[1] + 0.72, "font-size": 2.1, "text-anchor": "middle" });
+  const breath = svgEl("g", {}, ui);
+  const bHalo = svgEl("circle", { cx: -8.2, cy: 2.75, r: 1.5, fill: "none", stroke: STRETCH_BLUE, "stroke-width": 0.14, opacity: 0.35 }, breath);
+  const bDot = svgEl("circle", { cx: -8.2, cy: 2.75, r: 0.8, fill: STRETCH_BLUE, opacity: 0.32, stroke: STRETCH_BLUE, "stroke-width": 0.12 }, breath);
+  const bWord = stretchText(breath, { x: -8.2, y: 3.15, "font-size": 1.15, "text-anchor": "middle" });
+  const step = stretchText(ui, { x: 9.5, y: 4.2, "font-size": 1.2, "text-anchor": "end", opacity: 0.6 });
+  const dim = svgEl("rect", { x: -10.4, y: -13.9, width: 20.8, height: 18.8, fill: "#1f3328", opacity: 0.55 }, svg);
+  const msg = svgEl("g", {}, svg);
+  const big = stretchText(msg, { x: 0, y: -10.2, "text-anchor": "middle", "font-size": 3.2 });
+  const sub = stretchText(msg, { x: 0, y: -8.1, "text-anchor": "middle", "font-size": 1.45, fill: STRETCH_YELLOW });
+  const show = (n, on) => n.setAttribute("visibility", on ? "visible" : "hidden");
+  const last = {};
+  const setText = (node, key, value) => {
+    if (last[key] !== value) { last[key] = value; node.textContent = value; }
+  };
+  return {
+    svg,
+    // s: { pose, anim, now, marks, extra, name, tag, count, ringFrac, breath, step, msg, paused }
+    render(s) {
+      board.draw(s.pose, s.anim, s.now);
+      drawMarks(poseSkeleton(s.pose, s.anim), s.marks, { ...s.extra, now: s.now, pose: s.pose });
+      const hasMsg = !!s.msg;
+      show(name, !hasMsg && !!s.name);
+      if (last.name !== (s.name || "")) {
+        setText(name, "name", s.name || "");
+        // A long name (English) would run into the countdown ring: squeeze it
+        // into the space left of the ring.
+        name.removeAttribute("textLength");
+        name.removeAttribute("lengthAdjust");
+        let width = 0;
+        try { width = name.getComputedTextLength(); } catch (_) { width = 0; }
+        if (width > 14.6) {
+          name.setAttribute("textLength", "14.6");
+          name.setAttribute("lengthAdjust", "spacingAndGlyphs");
+        }
+      }
+      show(tag, !hasMsg && !!s.tag); setText(tag, "tag", s.tag || "");
+      show(ring, !hasMsg && s.count != null);
+      if (s.count != null) {
+        setText(num, "num", String(s.count));
+        arc.setAttribute("stroke-dashoffset", pf(STRETCH_RING_LEN * (1 - Math.max(0, Math.min(1, s.ringFrac)))));
+      }
+      show(breath, !hasMsg && !!s.breath);
+      if (s.breath) {
+        bDot.setAttribute("r", pf(s.breath.r));
+        bHalo.setAttribute("opacity", pf(0.15 + 0.3 * (s.breath.r - 0.6) / 0.9));
+        setText(bWord, "bw", s.breath.word);
+      }
+      show(step, !!s.step); setText(step, "step", s.step || "");
+      show(dim, !!s.paused);
+      show(msg, hasMsg);
+      if (hasMsg) {
+        setText(big, "big", String(s.msg.big || ""));
+        big.setAttribute("font-size", String(Number(s.msg.size) || 3.2));
+        setText(sub, "sub", String(s.msg.sub || ""));
+        big.setAttribute("y", s.paused ? "-5.4" : "-10.2");
+        sub.setAttribute("y", s.paused ? "-3.2" : "-8.1");
+      }
+    },
+  };
+}
+
+function stretchCycleMs(anim) {
+  let t = 0;
+  for (let i = 1; i < anim.frames.length; i++) t += anim.frames[i].ms;
+  return t + anim.frames[0].ms;
+}
+
+// The hold loop at t ms: the same arithmetic as holdState() in
+// src/stretch-session.js (which is the tested copy).
+function stretchHoldAt(board, t) {
+  const anim = board.anim;
+  const cyc = stretchCycleMs(anim);
+  const second = t >= board.ms / 2;
+  let u = ((t % cyc) + cyc) % cyc;
+  if (board.reverse && second) u = (cyc - u) % cyc;
+  const F = anim.frames;
+  let target = 0;
+  let source = F.length - 1;
+  let k = 0;
+  let rest = u;
+  for (let i = 1; i <= F.length; i++) {
+    const idx = i % F.length;
+    const ms = F[idx].ms;
+    if (rest <= ms || i === F.length) { target = idx; source = i - 1; k = Math.min(1, rest / ms); break; }
+    rest -= ms;
+  }
+  const cues = Array.isArray(board.cues) ? board.cues : [];
+  const entry = cues[target] || { cue: "", br: "none", hand: "" };
+  const near = cues[k < 0.5 ? source : target] || entry;
+  let cue = entry.cue || "";
+  if (Array.isArray(board.halves) && board.halves.length === 2) {
+    cue = board.halves[second ? 1 : 0] + (entry.br !== "none" && entry.cue ? " · " + entry.cue : "");
+  }
+  return { u, k, half: second ? 1 : 0, cue, br: entry.br, hand: near.hand, reverse: !!(board.reverse && second) };
+}
+
+function stretchBreath(br, k, words) {
+  const w = words || {};
+  if (br === "in") return { word: w.in || "", r: 0.6 + 0.9 * stretchEase(k) };
+  if (br === "out") return { word: w.out || "", r: 1.5 - 0.9 * stretchEase(k) };
+  if (br === "hold") return { word: w.hold || "", r: 1.5 };
+  return null;
+}
+
+// What the board shows at this moment, plus the live cue line.
+function stretchFrameState(view, now) {
+  const b = view.board || {};
+  const anim = b.anim;
+  const reduced = prefersReducedMotion();
+  const live = !b.paused && !reduced;
+  const raw = b.paused ? b.elapsed : b.elapsed + (now - view.syncedAt);
+  const t = Math.max(0, Math.min(typeof b.ms === "number" ? b.ms : Infinity, raw));
+  const out = { anim, now: live ? now : 0, marks: [], extra: { half: 0, hand: "", reverse: false }, step: b.step || "", paused: !!b.paused, msg: b.msg || null, cue: null };
+  if (b.type === "anim") {
+    out.pose = poseAt(anim, reduced ? view.still : now - view.syncedAt);
+    out.name = b.name || "";
+    return out;
+  }
+  if (b.type === "still") {
+    out.pose = anim.frames[0].pose;
+    if (b.countdown && out.msg && !b.paused) out.msg = { ...out.msg, big: String(Math.max(1, b.countdown - Math.floor(t / 1000))) };
+    return out;
+  }
+  out.name = b.name || "";
+  out.tag = b.tag || "";
+  out.marks = b.marks || [];
+  if (b.type === "enter" || b.type === "exit") {
+    out.pose = poseAt(anim, reduced ? Infinity : t);
+    out.extra.half = b.type === "exit" ? 1 : 0;
+    if (b.type === "enter") { out.count = b.count; out.ringFrac = 1; }
+    return out;
+  }
+  // hold
+  const h = stretchHoldAt(b, t);
+  out.pose = poseAt(anim, reduced ? view.still : h.u);
+  out.extra = { half: h.half, hand: h.hand, reverse: h.reverse };
+  out.count = Math.max(1, Math.ceil((b.ms - t) / 1000));
+  out.ringFrac = 1 - t / b.ms;
+  out.breath = reduced ? null : stretchBreath(h.br, h.k, view.breath);
+  out.cue = b.paused ? null : h.cue;
+  return out;
+}
+
+function tickStretch(now) {
+  stretchFrame = null;
+  if (!stretchEl || !stretchView || !stretchEl.isConnected) return;
+  const state = stretchFrameState(stretchView, now);
+  stretchView.boardView.render(state);
+  if (state.cue !== null && state.cue !== undefined) {
+    const cueEl = stretchEl.querySelector(".stretch-cue");
+    if (cueEl && cueEl.textContent !== state.cue) cueEl.textContent = state.cue;
+  }
+  if (!state.paused) stretchFrame = requestAnimationFrame(tickStretch);
+}
+
+function startStretchLoop() {
+  if (stretchFrame !== null) cancelAnimationFrame(stretchFrame);
+  stretchFrame = requestAnimationFrame(tickStretch);
+}
+
+function stretchButton(spec) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = spec && spec.primary ? "stretch-btn primary" : "stretch-btn";
+  button.textContent = spec && spec.label ? String(spec.label) : "";
+  const action = spec && STRETCH_ACTIONS.has(spec.action) ? spec.action : null;
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    if (action && window.noticeBubbleAPI.stretchAction) window.noticeBubbleAPI.stretchAction(action);
+  });
+  return button;
+}
+
+function buildStretchCard() {
+  const card = document.createElement("div");
+  card.className = "card stretch-card";
+  card.dataset.kind = "stretch";
+  card.dataset.expandable = "false";
+  card.dataset.pose = "false";
+  const bar = document.createElement("div");
+  bar.className = "level-bar";
+  const copy = document.createElement("div");
+  copy.className = "copy";
+  const title = document.createElement("div");
+  title.className = "title";
+  const titleText = document.createElement("span");
+  titleText.className = "stretch-title-text";
+  const count = document.createElement("span");
+  count.className = "stretch-count";
+  title.append(titleText, count);
+  const boardView = buildStretchBoard();
+  const cue = document.createElement("div");
+  cue.className = "stretch-cue";
+  const body = document.createElement("div");
+  body.className = "body";
+  const pills = document.createElement("div");
+  pills.className = "stretch-pills";
+  const note = document.createElement("div");
+  note.className = "stretch-note";
+  const buttons = document.createElement("div");
+  buttons.className = "stretch-buttons";
+  copy.append(title, boardView.svg, cue, body, pills, note, buttons);
+  const dismiss = document.createElement("button");
+  dismiss.type = "button";
+  dismiss.className = "card-dismiss";
+  dismiss.textContent = String.fromCharCode(0x00d7);
+  dismiss.setAttribute("aria-label", "Close");
+  dismiss.addEventListener("click", (event) => {
+    event.stopPropagation();
+    const action = stretchView && stretchView.data && stretchView.data.dismiss;
+    if (STRETCH_ACTIONS.has(action) && window.noticeBubbleAPI.stretchAction) window.noticeBubbleAPI.stretchAction(action);
+  });
+  // Not a notice: nothing to copy, and a click on the card body does nothing.
+  card.addEventListener("contextmenu", (event) => event.preventDefault());
+  card.appendChild(buildEyes());
+  card.append(bar, copy, dismiss);
+  return { card, boardView };
+}
+
+// Applies one payload from main. Text and buttons change only when they
+// differ; the board's clock re-syncs only on a new `seq` (a re-send of the
+// same card must not jump the figure).
+function applyStretchCard(data) {
+  let fresh = false;
+  if (!stretchEl) {
+    const built = buildStretchCard();
+    stretchEl = built.card;
+    stretchView = { boardView: built.boardView, data: null, seq: null, syncedAt: 0, still: 0, breath: null, board: null, buttonsKey: "" };
+    fresh = true;
+  }
+  const el = stretchEl;
+  const view = stretchView;
+  const level = LEVELS.has(data.level) ? data.level : "info";
+  el.dataset.level = level;
+  el.dataset.phase = typeof data.phase === "string" ? data.phase : "";
+  const setT = (selector, value) => {
+    const node = el.querySelector(selector);
+    const text = value ? String(value) : "";
+    if (node && node.textContent !== text) node.textContent = text;
+  };
+  setT(".stretch-title-text", data.title);
+  setT(".stretch-count", data.count);
+  setT(".body", data.body);
+  setT(".stretch-note", data.note);
+  // The live cue is rewritten every frame during a hold; this is its start.
+  setT(".stretch-cue", data.cue);
+  const pills = el.querySelector(".stretch-pills");
+  const p = data.pills;
+  if (p && Number.isInteger(p.n) && p.n > 0 && p.n <= 24) {
+    while (pills.children.length < p.n) pills.appendChild(document.createElement("i"));
+    while (pills.children.length > p.n) pills.lastChild.remove();
+    const done = new Set(Array.isArray(p.done) ? p.done : []);
+    const skipped = new Set(Array.isArray(p.skipped) ? p.skipped : []);
+    [...pills.children].forEach((pill, k) => {
+      const cls = done.has(k) ? "done" : skipped.has(k) ? "skip" : k === p.now ? "now" : "";
+      if (pill.className !== cls) pill.className = cls;
+    });
+  } else {
+    pills.textContent = "";
+  }
+  const buttonList = Array.isArray(data.buttons) ? data.buttons.slice(0, 4) : [];
+  const buttonsKey = JSON.stringify(buttonList.map((b) => [b && b.action, b && b.label, !!(b && b.primary)]));
+  if (buttonsKey !== view.buttonsKey) {
+    view.buttonsKey = buttonsKey;
+    const wrap = el.querySelector(".stretch-buttons");
+    wrap.textContent = "";
+    for (const spec of buttonList) wrap.appendChild(stretchButton(spec));
+  }
+  view.data = data;
+  view.breath = data.breath && typeof data.breath === "object" ? data.breath : null;
+  const board = data.board && typeof data.board === "object" && data.board.anim
+    && Array.isArray(data.board.anim.frames) && data.board.anim.frames.length ? data.board : null;
+  if (board && (fresh || data.seq !== view.seq)) {
+    view.seq = data.seq;
+    view.board = { ...board, elapsed: Number(board.elapsed) || 0 };
+    view.syncedAt = performance.now();
+    view.still = poseStillTime(board.anim);
+  }
+  if (view.board) startStretchLoop();
+  return { element: el, fresh };
+}
+
+function dropStretchCard() {
+  if (!stretchEl) return null;
+  const el = stretchEl;
+  stretchEl = null;
+  stretchView = null;
+  if (stretchFrame !== null) { cancelAnimationFrame(stretchFrame); stretchFrame = null; }
+  return el;
 }
 
 // ── Notice styles (comic / pixel) ─────────────────────────────────────────
@@ -1437,6 +2284,9 @@ function playEntrance(element, style) {
   }
   const more = element.querySelector(".skin-more");
   if (prefersReducedMotion()) return;
+  // The stretch card rewrites its lines while it is up; typing them out would
+  // fight those updates.
+  if (element.classList.contains("stretch-card")) return;
   const copy = element.querySelector(".copy");
   const title = copy && copy.querySelector(".title");
   const body = copy && copy.querySelector(".body");
@@ -1547,6 +2397,21 @@ function show(payload) {
     next.push(element);
   }
 
+  // The stretch card rides at the end of the stack, closest to the pet.
+  const stretchData = !legacy && data.stretch && typeof data.stretch === "object" ? data.stretch : null;
+  if (stretchData) {
+    const { element, fresh: isFresh } = applyStretchCard(stretchData);
+    if (isFresh) {
+      if (next.length + 1 <= MAX_TAIL_CARDS) element.classList.add("entering");
+      fresh.add(element);
+    }
+    element.dataset.theme = presentation.themeId;
+    next.push(element);
+  } else {
+    const old = dropStretchCard();
+    if (old) collapseCard(null, old);
+  }
+
   reorder(next);
   applyPresentation(next, next.length > 0 && next.length <= MAX_TAIL_CARDS ? presentation.tailSide : null);
   refreshSkins(next, fresh);
@@ -1566,6 +2431,10 @@ function show(payload) {
 function hide() {
   stack.classList.remove("visible");
   stack.classList.add("hiding");
+  // A hidden window must not keep the stretch figure animating; the card is
+  // rebuilt from the next payload if the break comes back.
+  const old = dropStretchCard();
+  if (old) setTimeout(() => { if (old.parentNode === stack) stack.removeChild(old); }, 300);
 }
 
 window.noticeBubbleAPI.onShow(show);

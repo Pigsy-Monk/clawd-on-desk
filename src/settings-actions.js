@@ -335,11 +335,17 @@ const updateRegistry = {
   noticeReactionsEnabled: requireBoolean("noticeReactionsEnabled"),
   noticeBubbleStyle: requireEnum("noticeBubbleStyle", ["pixel", "comic", "card"]),
   noticeHistoryEnabled: requireBoolean("noticeHistoryEnabled"),
+  stretchReminderEnabled: requireBoolean("stretchReminderEnabled"),
+  stretchReminderIntervalMinutes: requireIntegerInRange("stretchReminderIntervalMinutes", 15, 240),
+  stretchReminderStartHour: requireIntegerInRange("stretchReminderStartHour", 0, 23),
+  stretchReminderEndHour: requireIntegerInRange("stretchReminderEndHour", 1, 24),
+  stretchReminderWorkdaysOnly: requireBoolean("stretchReminderWorkdaysOnly"),
   codexHookHealthNotifyEnabled: requireBoolean("codexHookHealthNotifyEnabled"),
   codexHookHealthLastNotified: requireString("codexHookHealthLastNotified", { allowEmpty: true }),
   telegramMigrationLastNotified: requireString("telegramMigrationLastNotified", { allowEmpty: true }),
   feishuApprovalMigrationLastNotified: requireString("feishuApprovalMigrationLastNotified", { allowEmpty: true }),
   lowPowerIdleMode: requireBoolean("lowPowerIdleMode"),
+  ignoreReducedMotion: requireBoolean("ignoreReducedMotion"),
   keepAwakeWhileWorking: requireBoolean("keepAwakeWhileWorking"),
   petTint(value) {
     if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -2494,6 +2500,15 @@ async function slackNotifySendTest(_payload, deps = {}) {
   return result || { status: "error", message: "Slack notification test returned no result" };
 }
 
+// Settings "Try it now" for stretch breaks: the invite at once. No commit.
+function stretchTryNow(_payload, deps = {}) {
+  if (!deps || typeof deps.tryStretchNow !== "function") {
+    return { status: "error", message: "stretch.tryNow requires tryStretchNow dep" };
+  }
+  const result = deps.tryStretchNow();
+  return result && typeof result === "object" ? result : { status: "error", message: "stretch.tryNow returned no result" };
+}
+
 function cleanupMessage(result) {
   const summary = result && result.summary;
   if (!summary) return "Integration cleanup finished";
@@ -2784,6 +2799,7 @@ const commandRegistry = {
   "slackNotify.status": slackNotifyStatus,
   "slackNotify.secretInfo": slackNotifySecretInfo,
   "slackNotify.test": slackNotifySendTest,
+  "stretch.tryNow": stretchTryNow,
   "telegramMigration.snapshot": telegramMigrationSnapshot,
   "telegramMigration.dispatch": telegramMigrationDispatch,
 };

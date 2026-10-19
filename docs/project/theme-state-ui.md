@@ -337,7 +337,24 @@ Mini 状态映射：
 - 举牌期间普通状态视觉（`source` 非 `reaction`、非 `notification`、非 DND / mini）在 main 的 `requestDisplayedVisual` 被推迟：姿势结束时 renderer 的 `resume-from-reaction` 会取回当前状态，所以会话回合结束等普通状态切换不再把牌子顶掉；权限请求（`notification`）、拖拽 / 点击反应、DND、mini 照常立即打断；姿势超过 120 秒不再推迟（防 renderer 卡死）
 - 反应期间 main 停止光标轮询，所以悬停 / 滚轮 / 点击 / 右键由 hit window 上报、`src/notice-screen-runtime.js` 换算到 viewBox 后处理；悬停时黑板放大 1.5×（滚轮 1× 到窗口放得下为止，正方形窗口约 1.72×）、停留倒计时和换手暂停，跑马灯不停并在悬停期间循环（三遍已滚完则从头开始）；抛在空中时忽略悬停。右键落在黑板上时 main 用 `noticeCopyText`（`src/notice-text.js`，与通知卡片共用）写剪贴板，其他位置仍是普通右键菜单。姿势期间 hit window 的点击 / 双击反应被门控，点在黑板外仍是单击揭示 HUD；`prefers-reduced-motion` 下无跑马灯、无缩放过渡、不换手
 - `notice-store` 订阅不回放当前内容，main 的 reaction 订阅与 bubble 都以启动时的 `list()` 为基线，因此启动后推送的第一条通知也会反应（此前第一条被当成基线吞掉）
+- **动作卡片（pose）**：`POST /notice` 可带 `pose`（关键帧动画：每帧关节角度、`root` 平移/绕脚旋转、`face` 6 种表情、`prop` 7 种小道具，只写变化部分）。`src/notice-pose.js` 是唯一校验：夹住所有数值、丢掉不认识的字段、把每帧补全成完整姿势（上限 24 帧 / 20 秒），有 `series` 时图表优先。store 存为 `kind: "pose"`；卡片（`notice-bubble.html` 内联的豆豆人渲染，CSP 只允许内联脚本）只做插值和 SVG 绘制，点卡片重播、× 关闭，`prefers-reduced-motion` 下显示动作最大的一帧。动作卡片**不经过举牌**：不被 held、不触发宠物反应。通知历史只记标题和正文。agent 侧由共享 skill `pet-pose`（`~/.agents/skills/pet-pose`）把文字描述翻译成关键帧并推送
+- **系统减少动态**：系统要求减少动态时（Windows 关闭“显示动画”、macOS“减弱动态效果”），各页面的 `prefers-reduced-motion: reduce` 生效，举牌不滚动不换手、动作卡片只显示最大幅度的一帧（点卡片播一轮）。设置“系统减少动态时仍然播放动画”（`ignoreReducedMotion`，默认关）由 `src/reduced-motion-override.js` 实现：Chromium 没有反向开关，所以对 app 的每个 webContents 用 `webContents.debugger` 发 `Emulation.setEmulatedMedia`（`prefers-reduced-motion: no-preference`），覆盖页面 matchMedia 和嵌套 SVG 的 CSS，切换即时生效；代价是开着时这些窗口不能常开 DevTools（打开会被摘掉，下次加载时补回），只摘自己挂上的 debugger
+- 浮层窗口（通知卡片、大图）的页面就绪改为跟踪 `did-start-loading` / `did-finish-load`：Electron 在派发 `did-finish-load` 时 `isLoading()` 仍为 true，旧逻辑在这个时刻判定“还在加载”而不显示窗口，导致启动后第一张卡片的窗口一直隐藏（隐藏窗口的动画帧约 1 帧/秒）
 - 渲染窗口的 theme config 走 `--theme-config` 命令行参数；Windows 整条进程命令行上限 32767 字符，所以 `buildRendererThemeConfig` 只在 `accessorySlots` 里各带一份 head / mouth attachment map，不再在顶层重复
+
+### Stretch Breaks（拉伸跟练）
+
+宠物自己计时，到点**邀请**用户跟着卡片上的豆豆人做一组拉伸（目前只开 B 组「腰背舒展」，6 个动作约 2 分钟），取代原来外部计划任务推的「起来动一动」通知。
+
+- **模块**：`src/stretch-session.js`（动作数据、时间线、session 引擎、卡片 view model；A 肩颈 / C 手腕脚踝已写成同一结构，`ENABLED_GROUP_IDS` 加 id 并补英文即可启用）、`src/stretch-scheduler.js`（纯逻辑：间隔、时段、离开、顺延、稍后 / 今天跳过）、`src/stretch-runtime.js`（main 里的唯一 owner：阶段 `idle → sign → invite → run → finish`，窗口相关全部注入）。动作关键帧走 `notice-pose.js` 归一化；角度按右侧写，左侧由代码镜像
+- **偏好**：`stretchReminderEnabled`（默认开）、`stretchReminderIntervalMinutes`（默认 60，15–240）、`stretchReminderStartHour` / `EndHour`（默认 9 / 19；结束 24 = 午夜，开始 ≥ 结束视为跨午夜）、`stretchReminderWorkdaysOnly`（默认开）。设置 → 通用 → 提醒与反馈 →「拉伸跟练提醒」，开关行带「现在试一下」（命令 `stretch.tryNow`，不写偏好）
+- **计时**：runtime 每 30 秒 `evaluate()` 一次。系统空闲（`powerMonitor.getSystemIdleTime`，键盘和鼠标都算）≥ 10 分钟算离开：丢掉这次邀请，回来后重新计一个完整间隔；两次评估之间隔了 5 分钟以上（睡眠 / 休眠）同样处理。出了时段清空倒计时，进时段后从头计。到点时 DND、mini（含过渡）、有待处理的权限请求、宠物隐藏、全屏前台、已有通知在举牌时 **defer**，下个 30 秒再试，不丢
+- **邀请**：主题有 `notice-screen` reaction 且 `canPlay` 时，复用举牌：payload 带 `dwellMs: 30000`（renderer 的固定停留，悬停照样暂停），id 前缀 `stretch-invite-`，没有关联 notice。左键点黑板 → runtime 打开邀请卡片（开始 / 10 分钟后 / 今天跳过，× = 10 分钟后）并让 renderer 收牌（`notice-screen-lower`）；右键黑板 → `notice-screen-runtime` 的 `onBoardContextMenu` 认领，弹同样三项的原生菜单，**不复制**（普通通知的牌子右键仍是复制）；30 秒不理（`dwell`）= 稍后。牌子被新通知接手（`replaced`）或被打断（权限请求、DND、拖拽、其他视觉提交）时不弹卡片，2 分钟后再邀请。主题没有黑板或举牌投递失败时直接弹邀请卡片
+- **跟练**：卡片不是 store 里的 notice，而是 `notice-bubble.js` 的单独槽位 `setStretchCard()`，随 `notice-bubble-show` 的 `stretch` 字段下发，排在卡片栈最靠近宠物的位置，没有 TTL、不进通知历史、不能复制。main 在每个段落切换和暂停 / 继续时发一份新 payload（带 `seq`），页面只在 `seq` 变化时重同步时钟、两次之间自己按 rAF 插值；黑板上有动作名、左右侧标记、倒计时环、吸气 / 呼气圆点、「2 / 6」、跟着手脚走的粉笔记号和居中提示（下一个 / 换边 / 暂停中）。按钮：暂停 / 继续、跳过这个、结束（× = 结束），按钮只把白名单 action 名经 `notice-bubble-stretch-action` 发回 main。跳过在动作里会跳掉整个动作（两侧），跳过最后一个动作算提前结束。做完显示「做完啦！」（6 秒后收），提前结束显示「先到这儿 · 做了 x / n 个」（4 秒后收）。「轻轻后仰」的提示保留「腰不舒服就跳过这个」。减少动态时豆豆人定格、倒计时照走
+- **和通知的冲突**：开始跟练就收牌，宠物空出手。`run` / `finish` 期间（runtime `isBusy()`）新通知一律 held（不举牌、不出卡片），store 的过期暂停（`pauseExpiry` / `resumeExpiry`，恢复时每张卡补回等待的时间）；跟练卡片收起后最新那条按普通流程举牌，pose 卡片直接显示。跟练中右键宠物，原菜单最上面加「暂停 / 继续、跳过这个动作、结束跟练」
+- **测试入口**：除了设置里的按钮，`POST /stretch/try`（`Content-Type: application/json`，无 body，走本机 hook 传输检查，带 Origin 的浏览器请求 403，Remote SSH ingress 404）返回 `{ status, phase }`
+- **文案**：卡片内容（动作名、口令、提示、按钮）只写了中文和英文，`zh` / `zh-TW` 用中文，其余语言用英文；设置项和右键菜单 7 种语言齐全
+- **未做**：像素 Clawd 跟着豆豆举手 / 歪身（demo 里的 `petMimic`，主题没有对应素材）
 
 ## Electron And Platform Notes
 

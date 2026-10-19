@@ -21,21 +21,36 @@ class FakeBrowserWindow {
     this.sent = [];
     this.loadedFile = null;
     const self = this;
+    // Off by default (the page is ready); a test can set loading and replay
+    // the load events with emitLoad().
+    this.loading = false;
+    this.listeners = [];
     this.webContents = {
-      isLoading: () => false,
+      isLoading: () => self.loading,
       isDestroyed: () => self.destroyed,
       insertCSS: () => Promise.resolve("key"),
       removeInsertedCSS: () => Promise.resolve(),
       setZoomFactor: () => {},
       send: (channel, payload) => self.sent.push({ channel, payload }),
-      once: () => {},
-      on: () => {},
+      once: (event, fn) => self.listeners.push({ event, fn, once: true }),
+      on: (event, fn) => self.listeners.push({ event, fn, once: false }),
     };
     windows.set(this.webContents, this);
   }
 
   static fromWebContents(contents) { return windows.get(contents) || null; }
   isDestroyed() { return this.destroyed; }
+  // Electron's order: did-finish-load fires while isLoading() is still true;
+  // only did-stop-loading, after it, sees the page done.
+  emitLoad() {
+    for (const event of ["did-finish-load", "did-stop-loading"]) {
+      if (event === "did-stop-loading") this.loading = false;
+      for (const l of this.listeners.filter((x) => x.event === event)) {
+        if (l.once) this.listeners.splice(this.listeners.indexOf(l), 1);
+        l.fn();
+      }
+    }
+  }
   loadFile(file) { this.loadedFile = file; }
   setAlwaysOnTop() {}
   setBounds(bounds) { this.bounds = bounds; }
@@ -167,6 +182,11 @@ describe("notice stack height estimate", () => {
     );
   });
 
+  it("makes room for a pose card's chalkboard", () => {
+    const text = estimateNoticeStackHeight([notice("n1")]);
+    assert.equal(estimateNoticeStackHeight([notice("n1", { kind: "pose", pose: { frames: [] } })]) - text, 220);
+  });
+
   it("survives a trend notice with no series list at all", () => {
     assert.equal(estimateNoticeStackHeight([notice("n1", { kind: "trend" })]), 150);
     assert.equal(estimateNoticeStackHeight([notice("n1", { kind: "trend", series: null })]), 150);
@@ -230,6 +250,24 @@ describe("notice bubble contract", () => {
     bubble.cleanup();
     assert.equal(bubble.getBubbleWindow(), null);
     assert.equal(win.destroyed, true);
+  });
+
+  it("shows the first notice even though the page reports loading at did-finish-load", () => {
+    const ctx = createCtx();
+    const bubble = initNoticeBubble(ctx);
+    const orig = FakeBrowserWindow.prototype.loadFile;
+    FakeBrowserWindow.prototype.loadFile = function (file) { this.loading = true; return orig.call(this, file); };
+    try {
+      ctx.noticeStore.push(notice("n1"));
+    } finally {
+      FakeBrowserWindow.prototype.loadFile = orig;
+    }
+    const win = bubble.getBubbleWindow();
+    assert.equal(win.visible, false, "nothing to show before the page loads");
+    win.emitLoad();
+    assert.equal(win.visible, true, "shown once the page has loaded");
+    assert.ok(win.sent.some((entry) => entry.channel === "notice-bubble-show"));
+    bubble.cleanup();
   });
 
   it("sends the theme id and the tail side next to the notices", () => {
@@ -669,9 +707,31 @@ describe("notice-bubble.html", () => {
     assert.match(source, /notice\.kind === "trend" \|\| imageDataOf\(notice\)/);
     // The thumbnail's decoded size is reported, and a re-pushed picture redraws.
     assert.match(source, /img\.addEventListener\("load", reportHeight\);/);
-    assert.match(source, /imageFingerprint\(notice\),\n  \]\);/);
+    assert.match(source, /    imageFingerprint\(notice\),\n/);
     assert.match(css, /\.thumb \{[^}]*max-height: 120px;/);
     assert.match(css, /\.card\[data-expandable="true"\] \{ cursor: zoom-in; \}/);
+  });
+
+  it("draws a pose card's figure from numbers only, and replays it on click", () => {
+    const source = textOf(findAll(document, (node) => node.name === "script")[0]);
+    const css = textOf(findAll(document, (node) => node.name === "style")[0]);
+    // The figure is built node by node; no notice value reaches markup.
+    const engine = source.slice(source.indexOf("// ── Pose cards"), source.indexOf("// The card's text block"));
+    assert.ok(engine.length > 1000, "the pose engine is inline");
+    assert.doesNotMatch(engine, /innerHTML|insertAdjacentHTML|outerHTML/);
+    assert.match(engine, /document\.createElementNS\(SVG_NS, tag\)/);
+    // Only the store-normalized animation is used; the card checks its shape.
+    assert.match(source, /notice\.kind === "pose" && notice\.pose && Array\.isArray\(notice\.pose\.frames\)/);
+    // A click on a pose card replays; it never dismisses or expands it.
+    assert.match(source, /if \(card\.dataset\.pose === "true"\) replayPose\(card\);\n    else if \(card\.dataset\.expandable/);
+    // A re-pushed pose redraws, and reduced motion gets a still.
+    assert.match(source, /isPoseNotice\(notice\) \? notice\.pose : null,/);
+    // Reduced motion: a still until clicked, then one cycle.
+    assert.match(engine, /if \(!prefersReducedMotion\(\)\) return true;\n  return stage\.playUntil > now;/);
+    assert.match(engine, /stage\.playUntil = now \+ poseCycleMs\(stage\.anim\);/);
+    // Clip ids are unique per board so stacked pose cards do not clash.
+    assert.match(engine, /"pose-clip-" \+ \(\+\+poseClipSeq\)/);
+    assert.match(css, /\.pose-stage \{[^}]*aspect-ratio: 22 \/ 20;/);
   });
 
   it("routes dismiss and expand through the preload bridge", () => {
@@ -854,5 +914,97 @@ describe("notice-bubble.html", () => {
     assert.match(block[1], /\.tail-swing,\s*\n\s*\.tail-pose \{ animation: none; transition: none; \}/);
     assert.match(block[1], /\.eye \{ animation: none; \}/);
     assert.match(block[1], /\.card\[data-eyes="on"\] \.card-eyes \{ display: none; \}/);
+  });
+});
+
+describe("stretch card in the notice window", () => {
+  const CARD = Object.freeze({
+    id: "stretch", phase: "run", seq: 1, title: "侧弯 · 右侧", dismiss: "end",
+    board: { type: "hold", ms: 12000, elapsed: 2000, paused: false, anim: { frames: [{}] } },
+  });
+  function lastPayload(win) {
+    const shown = win.sent.filter((entry) => entry.channel === "notice-bubble-show");
+    return shown.length ? shown[shown.length - 1].payload : null;
+  }
+
+  it("shows the stretch card alone, below the store's cards, and hides with it", () => {
+    const ctx = createCtx();
+    const bubble = initNoticeBubble(ctx);
+    bubble.setStretchCard(CARD);
+    const win = bubble.getBubbleWindow();
+    assert.ok(win, "window made for the stretch card alone");
+    assert.equal(win.visible, true);
+    let payload = lastPayload(win);
+    assert.deepEqual(payload.notices, []);
+    assert.equal(payload.stretch.title, CARD.title);
+    assert.ok(win.bounds.height >= 470, "room for the board");
+
+    ctx.noticeStore.push(notice("n1"));
+    payload = lastPayload(win);
+    assert.deepEqual(payload.notices.map((n) => n.id), ["n1"]);
+    assert.equal(payload.stretch.id, "stretch", "still there next to a notice");
+
+    ctx.noticeStore.clear();
+    assert.equal(lastPayload(win).stretch.id, "stretch", "an empty store does not hide the break");
+    bubble.setStretchCard(null);
+    assert.equal(win.sent[win.sent.length - 1].channel, "notice-bubble-hide");
+  });
+
+  it("re-sends the card with its clock moved on, but not while paused", async () => {
+    const ctx = createCtx({ getNoticeStyle: () => "card" });
+    const bubble = initNoticeBubble(ctx);
+    bubble.setStretchCard(CARD);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    bubble.refreshPresentation();
+    const moved = lastPayload(bubble.getBubbleWindow()).stretch.board.elapsed;
+    assert.ok(moved >= 2020 && moved <= 12000, `elapsed ${moved}`);
+    bubble.setStretchCard({ ...CARD, board: { ...CARD.board, paused: true } });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    bubble.refreshPresentation();
+    assert.equal(lastPayload(bubble.getBubbleWindow()).stretch.board.elapsed, 2000);
+  });
+
+  it("forwards only whitelisted actions from its own page", () => {
+    const actions = [];
+    const ctx = createCtx({ onStretchAction: (action) => { actions.push(action); return true; } });
+    const bubble = initNoticeBubble(ctx);
+    bubble.setStretchCard(CARD);
+    const win = bubble.getBubbleWindow();
+    const own = { sender: win.webContents };
+    assert.equal(bubble.handleStretchAction(own, "pause"), true);
+    assert.equal(bubble.handleStretchAction(own, "rm"), false);
+    assert.equal(bubble.handleStretchAction({ sender: {} }, "end"), false);
+    assert.deepEqual(actions, ["pause"]);
+  });
+
+  it("registers the stretch action channel when the bubble has one", () => {
+    const channels = [];
+    const forwarded = [];
+    registerNoticeBubbleIpc({
+      ipcMain: { on: (channel, listener) => channels.push({ channel, listener }), removeListener() {} },
+      noticeBubble: {
+        handleNoticeBubbleHeight() {},
+        handleNoticeBubbleDismiss() {},
+        handleNoticeBubbleExpand() {},
+        handleNoticeBubbleCopy() {},
+        handleStretchAction: (event, action) => forwarded.push(action),
+      },
+    });
+    const entry = channels.find((c) => c.channel === "notice-bubble-stretch-action");
+    assert.ok(entry);
+    entry.listener({}, "skip");
+    assert.deepEqual(forwarded, ["skip"]);
+  });
+
+  it("the page builds the stretch card from textContent only and never copies it", () => {
+    const html = fs.readFileSync(path.join(__dirname, "..", "src", "notice-bubble.html"), "utf8");
+    const start = html.indexOf("// ── Stretch card");
+    const end = html.indexOf("// ── Notice styles (comic / pixel)");
+    assert.ok(start > 0 && end > start);
+    const section = html.slice(start, end);
+    assert.doesNotMatch(section, /innerHTML|insertAdjacentHTML|outerHTML/);
+    assert.match(section, /contextmenu", \(event\) => event\.preventDefault\(\)/);
+    assert.match(section, /STRETCH_ACTIONS\.has/);
+    assert.match(html, /data\.stretch/);
   });
 });

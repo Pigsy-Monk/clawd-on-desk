@@ -14,8 +14,14 @@
     "noticeReactionsEnabled",
     "noticeBubbleStyle",
     "noticeHistoryEnabled",
+    "stretchReminderEnabled",
+    "stretchReminderIntervalMinutes",
+    "stretchReminderStartHour",
+    "stretchReminderEndHour",
+    "stretchReminderWorkdaysOnly",
     "soundVolume",
     "lowPowerIdleMode",
+    "ignoreReducedMotion",
     "keepAwakeWhileWorking",
     "showTray",
     "showDock",
@@ -75,6 +81,10 @@
   const FLASH_NUMBER_KEYS = new Set([
     "flashIntervalMs",
     "flashDurationMs",
+    // The stretch group's number rows use the same helper and the same patch.
+    "stretchReminderIntervalMinutes",
+    "stretchReminderStartHour",
+    "stretchReminderEndHour",
   ]);
   const SESSION_CLEANUP_DEFAULTS = {
     sessionStaleMs: 600_000,
@@ -521,6 +531,7 @@
         labelKey: "rowNoticeHistory",
         descKey: "rowNoticeHistoryDesc",
       }),
+      buildStretchReminderGroup(),
       helpers.buildSwitchRow({
         key: "hideBubbles",
         labelKey: "rowHideBubbles",
@@ -578,6 +589,11 @@
         key: "lowPowerIdleMode",
         labelKey: "rowLowPowerIdleMode",
         descKey: "rowLowPowerIdleModeDesc",
+      }),
+      helpers.buildSwitchRow({
+        key: "ignoreReducedMotion",
+        labelKey: "rowIgnoreReducedMotion",
+        descKey: "rowIgnoreReducedMotionDesc",
       }),
       helpers.buildSwitchRow({
         key: "keepAwakeWhileWorking",
@@ -1638,6 +1654,57 @@
           max: 60000,
           zeroLabelKey: "valueAlways",
         }).row,
+      ])],
+    });
+  }
+
+  // Stretch breaks: on/off with a "Try it now" button, the interval and the
+  // active hours. "Try it now" asks main for the invite at once (a command,
+  // nothing is written).
+  function buildStretchReminderGroup() {
+    const intRow = (key, labelKey, descKey, unitKey, min, max) => helpers.buildNumberInputRow({
+      key,
+      labelKey,
+      descKey,
+      unitKey,
+      toDisplay: (v) => v,
+      fromDisplay: (v) => Math.max(min, Math.min(max, Math.round(v))),
+      min,
+      max,
+    }).row;
+    return helpers.buildCollapsibleGroup({
+      id: "general:stretch",
+      title: t("rowStretchReminder"),
+      desc: t("rowStretchReminderDesc"),
+      defaultCollapsed: true,
+      className: "stretch-collapsible",
+      children: [buildOptionList("stretch-option-list", [
+        helpers.buildSwitchRow({
+          key: "stretchReminderEnabled",
+          labelKey: "rowStretchReminderEnabled",
+          descKey: "rowStretchReminderEnabledDesc",
+          actionButton: {
+            labelKey: "stretchTryNow",
+            invoke: () => {
+              if (!window.settingsAPI || typeof window.settingsAPI.command !== "function") return;
+              return Promise.resolve(window.settingsAPI.command("stretch.tryNow", {})).then((result) => {
+                if (!result || result.status !== "ok") {
+                  ops.showToast(t("stretchTryNowFailed") + ((result && result.message) || ""), { error: true });
+                }
+              }).catch((err) => {
+                ops.showToast(t("stretchTryNowFailed") + (err && err.message), { error: true });
+              });
+            },
+          },
+        }),
+        intRow("stretchReminderIntervalMinutes", "rowStretchInterval", "rowStretchIntervalDesc", "unitMinutes", 15, 240),
+        intRow("stretchReminderStartHour", "rowStretchStartHour", "rowStretchStartHourDesc", "unitOClock", 0, 23),
+        intRow("stretchReminderEndHour", "rowStretchEndHour", "rowStretchEndHourDesc", "unitOClock", 1, 24),
+        helpers.buildSwitchRow({
+          key: "stretchReminderWorkdaysOnly",
+          labelKey: "rowStretchWorkdaysOnly",
+          descKey: "rowStretchWorkdaysOnlyDesc",
+        }),
       ])],
     });
   }

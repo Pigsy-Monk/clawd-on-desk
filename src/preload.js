@@ -57,6 +57,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
       id: typeof payload.id === "string" && payload.id.length <= 64 ? payload.id : null,
       title: typeof payload.title === "string" ? payload.title.slice(0, 200) : "",
     };
+    if (Number.isFinite(payload.dwellMs) && payload.dwellMs > 0) safe.dwellMs = Math.min(120000, payload.dwellMs);
     if (payload.visualRequest && typeof payload.visualRequest === "object") {
       safe.visualRequest = payload.visualRequest;
     }
@@ -80,6 +81,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
     cb(safe);
   }),
   onNoticeScreenCopied: (cb) => ipcRenderer.on("notice-screen-copied", (_, info) => {
+    cb({ id: info && typeof info.id === "string" ? info.id : null });
+  }),
+  onNoticeScreenLower: (cb) => ipcRenderer.on("notice-screen-lower", (_, info) => {
     cb({ id: info && typeof info.id === "string" ? info.id : null });
   }),
   reportNoticeScreenStatus: (status) => {

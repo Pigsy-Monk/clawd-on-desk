@@ -320,3 +320,54 @@ describe("notice screen IPC registration", () => {
     assert.throws(() => registerNoticeScreenIpc({ ipcMain }), /noticeScreen/);
   });
 });
+
+describe("notice sign runtime: hooks for the stretch invite", () => {
+  it("reports every ending with its id and reason, before handing the card back", () => {
+    const ended = [];
+    for (const reason of ["dwell", "replaced", "cancel"]) {
+      const h = createHarness({ onPoseEnded: (id, why) => ended.push([id, why]) });
+      startPose(h);
+      h.runtime.handleRendererStatus(h.fromRender, { active: false, id: "notice-3", reason });
+    }
+    const v = createHarness({ onPoseEnded: (id, why) => ended.push([id, why]) });
+    startPose(v);
+    v.state.committedFile = "clawd-notification.svg";
+    v.runtime.handleVisualCommitted({ file: "clawd-notification.svg" });
+    assert.deepStrictEqual(ended, [
+      ["notice-3", "dwell"], ["notice-3", "replaced"], ["notice-3", "cancel"], ["notice-3", "visual"],
+    ]);
+  });
+
+  it("passes the sign's id to the interrupted hook", () => {
+    const seen = [];
+    const h = createHarness({ onPoseInterrupted: (id) => seen.push(id) });
+    startPose(h);
+    h.runtime.handleRendererStatus(h.fromRender, { active: false, id: "notice-3", reason: "cancel" });
+    assert.deepStrictEqual(seen, ["notice-3"]);
+  });
+
+  it("lets a board right-click be claimed instead of copied", () => {
+    const asked = [];
+    const h = createHarness({ onBoardContextMenu: (id) => { asked.push(id); return true; } });
+    startPose(h);
+    assert.strictEqual(h.runtime.handleContextMenu(h.fromHit, { clientX: 20, clientY: 30 }), true);
+    assert.deepStrictEqual(asked, ["notice-3"]);
+    assert.deepStrictEqual(h.clipboard, [], "nothing copied");
+
+    // Unclaimed (or a throwing hook): the copy goes ahead as before.
+    const plain = createHarness({ onBoardContextMenu: () => { throw new Error("x"); } });
+    startPose(plain);
+    assert.strictEqual(plain.runtime.handleContextMenu(plain.fromHit, { clientX: 20, clientY: 30 }), true);
+    assert.deepStrictEqual(plain.clipboard, [noticeCopyText(NOTICE)]);
+  });
+
+  it("works with a sign that has no notice behind it", () => {
+    const h = createHarness({ onBoardContextMenu: () => true });
+    h.runtime.begin({ level: "info", id: "stretch-invite-1", title: "Time to stretch?" }, null, FILE);
+    h.state.committedFile = FILE;
+    h.runtime.handleRendererStatus(h.fromRender, { active: true, id: "stretch-invite-1", rect: SCREEN_RECT_FOR_HARNESS });
+    assert.strictEqual(h.runtime.handleHitClick(h.fromHit, { clientX: 20, clientY: 30 }), true);
+    assert.deepStrictEqual(h.signals, [["click", "stretch-invite-1"]]);
+    assert.strictEqual(h.runtime.handleContextMenu(h.fromHit, { clientX: 20, clientY: 30 }), true);
+  });
+});

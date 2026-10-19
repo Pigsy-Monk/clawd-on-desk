@@ -283,6 +283,36 @@ describe("updateRegistry pure-data validators", () => {
     assert.strictEqual(updateRegistry.noticeHistoryEnabled(0).status, "error");
   });
 
+  it("validates the stretch break prefs", () => {
+    assert.strictEqual(updateRegistry.stretchReminderEnabled(false).status, "ok");
+    assert.strictEqual(updateRegistry.stretchReminderEnabled("on").status, "error");
+    assert.strictEqual(updateRegistry.stretchReminderIntervalMinutes(15).status, "ok");
+    assert.strictEqual(updateRegistry.stretchReminderIntervalMinutes(240).status, "ok");
+    assert.strictEqual(updateRegistry.stretchReminderIntervalMinutes(14).status, "error");
+    assert.strictEqual(updateRegistry.stretchReminderIntervalMinutes(30.5).status, "error");
+    assert.strictEqual(updateRegistry.stretchReminderStartHour(0).status, "ok");
+    assert.strictEqual(updateRegistry.stretchReminderStartHour(24).status, "error");
+    assert.strictEqual(updateRegistry.stretchReminderEndHour(24).status, "ok");
+    assert.strictEqual(updateRegistry.stretchReminderEndHour(0).status, "error");
+    assert.strictEqual(updateRegistry.stretchReminderWorkdaysOnly(true).status, "ok");
+  });
+
+  it("stretch.tryNow asks main for the invite and commits nothing", () => {
+    let calls = 0;
+    const ok = commandRegistry["stretch.tryNow"]({}, { tryStretchNow: () => { calls += 1; return { status: "ok", phase: "sign" }; } });
+    assert.deepStrictEqual(ok, { status: "ok", phase: "sign" });
+    assert.strictEqual(calls, 1);
+    assert.strictEqual(ok.commit, undefined);
+    assert.strictEqual(commandRegistry["stretch.tryNow"]({}, {}).status, "error");
+  });
+
+  it("accepts only a boolean for the reduced-motion override", () => {
+    assert.strictEqual(updateRegistry.ignoreReducedMotion(true).status, "ok");
+    assert.strictEqual(updateRegistry.ignoreReducedMotion(false).status, "ok");
+    assert.strictEqual(updateRegistry.ignoreReducedMotion("true").status, "error");
+    assert.strictEqual(updateRegistry.ignoreReducedMotion(1).status, "error");
+  });
+
   it("accepts only supported bubble placement enums", () => {
     for (const value of ["auto", "left", "right"]) {
       assert.strictEqual(updateRegistry.bubbleFollowPreference(value).status, "ok");
