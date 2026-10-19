@@ -228,10 +228,52 @@ describe("notice reaction payload", () => {
       assert.deepStrictEqual(calls, [["play-notice-reaction", { level: "success", id: "n2", title: "ok" }]]);
     }
   });
+
+  it("docked at an edge, hands the notice to the theme's edge drawer and nothing else", () => {
+    const drawers = [];
+    const notice = { id: "m1", level: "info", title: "构建完成" };
+    const { calls, handle } = openHandler({
+      getMiniMode: () => true,
+      hasMiniSign: () => true,
+      playMiniSign: (payload, original) => { drawers.push([{ ...payload }, original]); return true; },
+      playNoticeScreen: () => { throw new Error("the head sign has no room in mini mode"); },
+    });
+    assert.strictEqual(handle.canPlay(), false, "the head sign stays off in mini mode");
+    assert.strictEqual(handle.canPlayMini(), true);
+    assert.strictEqual(handle(notice), true);
+    assert.deepStrictEqual(drawers, [[{ level: "info", id: "m1", title: "构建完成" }, notice]]);
+    assert.deepStrictEqual(calls, [], "no per-level reaction on top");
+  });
+
+  it("keeps mini mode as it was for a theme without an edge drawer, or while gated", () => {
+    const none = openHandler({
+      getMiniMode: () => true,
+      hasMiniSign: () => false,
+      playMiniSign: () => { throw new Error("must not be reached"); },
+    });
+    assert.strictEqual(none.handle.canPlayMini(), false);
+    assert.strictEqual(none.handle({ id: "m2", level: "warn", title: "x" }), false);
+    assert.deepStrictEqual(none.calls, []);
+    for (const extra of [
+      { getDoNotDisturb: () => true },
+      { getMiniTransitioning: () => true },
+      { isDragging: () => true },
+      { isPetHidden: () => true },
+      { getEnabled: () => false },
+      { getMiniMode: () => false },
+    ]) {
+      const gated = openHandler({ getMiniMode: () => true, hasMiniSign: () => true, playMiniSign: () => true, ...extra });
+      assert.strictEqual(gated.handle.canPlayMini(), false, Object.keys(extra)[0]);
+    }
+    // A drawer that declines leaves the notice unreacted, so main shows the card.
+    const declined = openHandler({ getMiniMode: () => true, hasMiniSign: () => true, playMiniSign: () => false });
+    assert.strictEqual(declined.handle({ id: "m3", level: "info", title: "x" }), false);
+    assert.deepStrictEqual(declined.calls, []);
+  });
 });
 
 describe("notice reaction theme bindings", () => {
-  it("binds the notice sign on clawd only; other themes keep the per-level reaction", () => {
+  it("binds the notice sign on clawd and calico; other themes keep the per-level reaction", () => {
     const clawd = JSON.parse(fs.readFileSync(path.join(ROOT, "themes", "clawd", "theme.json"), "utf8"));
     const file = clawd.reactions["notice-screen"] && clawd.reactions["notice-screen"].file;
     assert.strictEqual(file, "clawd-notice-screen.svg");
@@ -241,10 +283,16 @@ describe("notice reaction theme bindings", () => {
     // either hand (test/notice-screen-layout.test.js checks the envelope).
     assert.ok(clawd.rendering.objectChannelFiles.includes(file));
     assert.deepStrictEqual(clawd.fileHitBoxes[file], { x: -9.75, y: -15.8, w: 34.5, h: 32.8 });
-    for (const themeId of ["calico", "cloudling"]) {
-      const theme = JSON.parse(fs.readFileSync(path.join(ROOT, "themes", themeId, "theme.json"), "utf8"));
-      assert.strictEqual(theme.reactions["notice-screen"], undefined, themeId);
-    }
+    // Calico brings its own board (a cat-eared bubble); its geometry is checked
+    // in test/calico-notice-screen-asset.test.js and the layout tests.
+    const calico = JSON.parse(fs.readFileSync(path.join(ROOT, "themes", "calico", "theme.json"), "utf8"));
+    const calicoFile = calico.reactions["notice-screen"].file;
+    assert.strictEqual(calicoFile, "calico-notice-screen.svg");
+    assert.ok(fs.existsSync(path.join(THEME_ASSET_DIRS.calico, calicoFile)));
+    assert.ok(calico.rendering.objectChannelFiles.includes(calicoFile));
+    assert.ok(calico.fileHitBoxes[calicoFile]);
+    const cloudling = JSON.parse(fs.readFileSync(path.join(ROOT, "themes", "cloudling", "theme.json"), "utf8"));
+    assert.strictEqual(cloudling.reactions["notice-screen"], undefined);
   });
 
   it("covers every level with a real asset in every built-in theme", () => {

@@ -141,6 +141,7 @@ Copilot CLI 同步走 `<COPILOT_HOME 或 ~/.copilot>/hooks/hooks.json`，marker-
 | `src/settings-ui-core.js` + `src/settings-renderer.js` + `src/settings-tab-*.js` | Settings shared UI state、侧栏/tab shell 与各页逻辑 |
 | `src/menu.js` | 托盘 / 右键菜单，串起设置、Dashboard、mini mode、更新入口 |
 | `src/mini.js` | 极简模式入场、滑动、peek、状态映射 |
+| `src/mini-notice-popout.js` | 贴边时来通知：跳出来 → 普通举牌 → 牌子和卡片都下去后贴回原边。详见 `docs/project/theme-state-ui.md` Mini Mode |
 | `src/tick.js` | 主循环、鼠标轮询、眼球和 idle/sleep 逻辑 |
 | `src/drag-position.js` | 拖拽落点规范化与跨显示器钳制 |
 | `src/visible-margins.js` | 可视角色边距与 edge pinning 规则 |

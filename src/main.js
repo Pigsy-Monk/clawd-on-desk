@@ -205,6 +205,7 @@ const { getRightSideMirrorFiles, isVisualMirrored, resolveMirroredFile } = requi
 const { createTestReactionHandler } = require("./test-reaction");
 const { createNoticeReactionHandler } = require("./notice-reaction");
 const { createNoticeScreenRuntime, registerNoticeScreenIpc } = require("./notice-screen-runtime");
+const { createMiniNoticePopout } = require("./mini-notice-popout");
 const { createStretchRuntime } = require("./stretch-runtime");
 const createMacHideController = require("./mac-hide");
 const {
@@ -1739,6 +1740,13 @@ function canShowNoticeSign() {
     && !!resolveNoticeScreenFile();
 }
 
+// The head sign, or (docked at a screen edge) the jump out to show it: either
+// way a new notice goes on the sign, so its card waits behind it.
+function canShowAnyNoticeSign() {
+  return canShowNoticeSign()
+    || (typeof handleNoticeReaction.canPlayMini === "function" && handleNoticeReaction.canPlayMini());
+}
+
 function requestNoticeScreenReaction(payload, notice) {
   const file = resolveNoticeScreenFile();
   if (!file) return false;
@@ -2375,6 +2383,35 @@ const noticeScreenRuntime = createNoticeScreenRuntime({
   },
 });
 
+// ── A notice while docked (src/mini-notice-popout.js) ──
+// Docked at a screen edge the pet has no room for its head sign, so on a
+// theme with one it jumps out of the edge, shows the notice as usual, and
+// docks back at the same edge once the sign is down and no card is open.
+const miniNoticePopout = createMiniNoticePopout({
+  isMini: () => _mini.getMiniMode(),
+  isMiniTransitioning: () => _mini.getMiniTransitioning(),
+  getEdge: () => _mini.getMiniEdge(),
+  getPetBounds: () => getPetWindowBounds(),
+  getWorkArea: (b) => getNearestWorkArea(b.x + b.width / 2, b.y + b.height / 2),
+  exitMini: () => exitMiniMode(),
+  enterMini: (workArea, edge) => {
+    if (disableMiniModeCached) return;
+    _mini.enterMiniMode(workArea, false, edge);
+  },
+  playSign: (payload, notice) => requestNoticeScreenReaction(payload, notice),
+  isSignUp: () => !!noticeScreenRuntime.getPendingId(),
+  isCardOpen: () => {
+    const w = _noticeBubble.getBubbleWindow();
+    return !!(w && !w.isDestroyed() && w.isVisible());
+  },
+  revealCards: () => _noticeBubble.revealHeldNotices(),
+});
+
+// Either sign is up, holding a notice's card back.
+function getHeldSignNoticeId() {
+  return noticeScreenRuntime.getPendingId() || miniNoticePopout.getPendingId();
+}
+
 // Local notice history (~/.clawd/notice-history-v1) for the Dashboard's
 // Notices tab. It only observes store snapshots — memory on the notice path,
 // disk on a timer — and reads the pref live from the controller. The
@@ -2394,7 +2431,7 @@ const _noticeBubbleCtx = {
   // is defined further down and only consulted once notices arrive.
   // During a stretch break every new card waits (no sign, no card) until the
   // break's card is gone; the store's expiry is paused meanwhile.
-  shouldHoldNewNotices: (fresh) => isStretchBusy() || (!fresh.some(isPoseNotice) && canShowNoticeSign()),
+  shouldHoldNewNotices: (fresh) => isStretchBusy() || (!fresh.some(isPoseNotice) && canShowAnyNoticeSign()),
   onStretchAction: (action) => !!(stretchRuntime && stretchRuntime.handleAction(action)),
   get win() { return win; },
   // Deliberate: the notice stack is the pet "speaking", so it always follows
@@ -6007,6 +6044,9 @@ const handleNoticeReaction = createNoticeReactionHandler({
   hasPetWindow: () => !!(win && !win.isDestroyed()),
   sendToRenderer,
   playNoticeScreen: (payload, notice) => requestNoticeScreenReaction(payload, notice),
+  // Docked at a screen edge: jump out, show the sign, dock back.
+  hasMiniSign: () => !!resolveNoticeScreenFile(),
+  playMiniSign: (payload, notice) => miniNoticePopout.start(payload, notice),
 });
 
 // React once per snapshot, not once per notice: a burst of cards arriving
@@ -6050,7 +6090,7 @@ function reactToNewestNotice(newest) {
   handleNoticeReaction(newest);
   // The bubble held the new cards for the sign; if the sign is not showing
   // this notice after all (another theme, a gate, delivery failed), show them.
-  if (noticeScreenRuntime.getPendingId() !== newest.id) _noticeBubble.revealHeldNotices();
+  if (getHeldSignNoticeId() !== newest.id) _noticeBubble.revealHeldNotices();
 }
 
 let noticeWaitingForStretch = null;
@@ -6088,7 +6128,7 @@ stretchRuntime = createStretchRuntime({
     if (pendingPermissions.length > 0) blockers.push("permission");
     if (petWindowRuntime.isPetEffectivelyHidden()) blockers.push("hidden");
     try { if (_isForegroundFullscreen()) blockers.push("fullscreen"); } catch {}
-    if (noticeScreenRuntime.getPendingId()) blockers.push("notice-sign");
+    if (getHeldSignNoticeId()) blockers.push("notice-sign");
     if (!win || win.isDestroyed()) blockers.push("no-window");
     return blockers;
   },

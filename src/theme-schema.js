@@ -1,5 +1,10 @@
 "use strict";
 
+const {
+  resolveSign: resolveNoticeSign,
+  DEFAULT_SIGN: DEFAULT_NOTICE_SIGN,
+} = require("./notice-screen-layout");
+
 // Defaults used when theme.json omits optional fields.
 
 const DEFAULT_SOUNDS = {
@@ -199,6 +204,25 @@ function validateTrackingLayers(eyeTracking, errors) {
   }
 }
 
+// reactions["notice-screen"].sign: the renderer quietly falls back to clawd's
+// chalkboard geometry for a sign it cannot read, which would put the title off
+// the theme's own board; say so here instead.
+function validateNoticeSign(reactions, errors) {
+  const entry = isPlainObject(reactions) ? reactions["notice-screen"] : null;
+  if (!isPlainObject(entry) || entry.sign === undefined) return;
+  const pathName = 'reactions["notice-screen"].sign';
+  if (!isPlainObject(entry.sign)) {
+    errors.push(`${pathName} must be an object`);
+    return;
+  }
+  if (resolveNoticeSign(entry.sign) === DEFAULT_NOTICE_SIGN) {
+    errors.push(
+      `${pathName} needs screen {x, y, w, h} with positive w/h and line {startX, endX, baselineY, titleFontSize} `
+      + "with endX > startX and a positive titleFontSize"
+    );
+  }
+}
+
 function validateTheme(cfg) {
   const errors = [];
   const sleepMode = deriveSleepMode(cfg);
@@ -242,6 +266,7 @@ function validateTheme(cfg) {
   }
 
   validateTrackingLayers(cfg.eyeTracking, errors);
+  validateNoticeSign(cfg.reactions, errors);
 
   // eyeTracking.states listed states must use .svg if enabled
   if (cfg.eyeTracking && cfg.eyeTracking.enabled && cfg.states) {
