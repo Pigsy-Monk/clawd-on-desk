@@ -970,7 +970,10 @@ function applyState(state, svgOverride, options = {}) {
   ctx.sendToHitWin("hit-cancel-reaction");
 
   if (state !== "idle" && state !== "mini-idle") {
-    ctx.sendToRenderer("eye-move", 0, 0);
+    // The trailing null is the aim sample slot: no sample means the renderer
+    // eases any rotate/foreshorten layer back to its rest angle along with the
+    // eye offset.
+    ctx.sendToRenderer("eye-move", 0, 0, null);
   }
 
   if (isWakePollState(state) && !ctx.doNotDisturb) {

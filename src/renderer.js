@@ -637,9 +637,11 @@ function applyMiniFlip(el, state = currentState) {
 let _useLayeredTracking = false;
 let _trackingLayersConfig = null;  // raw config from theme.json
 let _themeMaxOffset = 20;          // theme-level maxOffset for normalization
-let _trackingLayers = null;        // { name: { wrappers: [], maxOffset, ease, x, y } }
+let _trackingLayers = null;        // { name: { wrappers: [], maxOffset, ease, x, y, aim } }
 let _layerTargetDx = 0;           // raw dx from tick.js (scaled to _themeMaxOffset)
 let _layerTargetDy = 0;           // raw dy from tick.js
+let _aimSample = null;            // raw cursor sample from tick.js: { x, y, w, h } in device px
+let _aimViewBox = null;           // effective viewBox of the tracked SVG (for the px-per-unit scale)
 let _layerAnimFrame = null;        // requestAnimationFrame handle
 let _layeredTrackingObj = null;    // the <object> element currently tracked (guard against re-init)
 let _layeredTrackingDocument = null;
@@ -3177,7 +3179,39 @@ function _getLayerTarget(layer, rawDx, rawDy) {
   return [rawDx * scale, rawDy * scale];
 }
 
+// ── Aim layers (mode "rotate" / "foreshorten") ──
+// The angle is measured in the art's own frame, so a pet drawn mirrored has to
+// mirror the cursor's horizontal offset too: the barrel that rests at −14° in
+// the art points the other way once #pet-facing-stage (.mini-left) or
+// #pet-asset-direction-stage flips it. Same composed answer the accessory
+// layer uses, so the two can never disagree about which way the pet faces.
+function _isAimMirrored() {
+  return miniLeftFlip !== shouldApplyMiniAssetFlip(currentState);
+}
+
+// The cursor sample for this frame, or null when the renderer has none (no
+// aim-move yet, or tick.js's eye-move(0, 0) zeroing) — which returns the aim
+// to its rest pose.
+function _aimSampleForFrame() {
+  if (!_aimSample || !_aimViewBox) return null;
+  return {
+    x: _aimSample.x,
+    y: _aimSample.y,
+    w: _aimSample.w,
+    h: _aimSample.h,
+    mirrored: _isAimMirrored(),
+  };
+}
+
+function _aimTargetFor(layer, sample) {
+  if (!sample || !_aimViewBox) return aimTracking.REST;
+  return aimTracking.computeAimTarget(layer.aim, sample, _aimViewBox) || aimTracking.REST;
+}
+
 function _layerNeedsAnimation(layer, rawDx, rawDy) {
+  if (layer.aim) {
+    return !aimTracking.isAimSettled(layer.aim, _aimTargetFor(layer, _aimSampleForFrame()));
+  }
   const [tx, ty] = _getLayerTarget(layer, rawDx, rawDy);
   return Math.abs(layer.x - tx) >= LAYER_SETTLE_EPSILON
     || Math.abs(layer.y - ty) >= LAYER_SETTLE_EPSILON;
@@ -3215,12 +3249,18 @@ function _initLayeredTracking(svgDoc) {
       }
     }
 
+    // `mode` picks how the layer follows: "translate" (the default, and the
+    // only behaviour themes without `mode` have ever had), "rotate" or
+    // "foreshorten". Only the two aim modes need a cursor sample.
+    const aim = aimTracking.createAimLayer(layerCfg);
+
     _trackingLayers[layerName] = {
       wrappers,
       maxOffset: layerCfg.maxOffset || 10,
       ease: layerCfg.ease || 0.15,
       x: 0,
       y: 0,
+      aim,
     };
   }
 
@@ -3243,9 +3283,27 @@ function _startLayerAnimLoop() {
 
     const rawDx = _layerTargetDx;
     const rawDy = _layerTargetDy;
+    const aimSample = _aimSampleForFrame();
     let allSettled = true;
 
     for (const layer of Object.values(_trackingLayers)) {
+      if (layer.aim) {
+        // Aim layer: ease the layer's own angle / foreshortening towards the
+        // target this sample asks for, then write the composed transform.
+        const target = _aimTargetFor(layer, aimSample);
+        const next = aimTracking.easeAim(layer.aim, target, layer.aim.ease);
+        layer.aim.angle = next.angle;
+        layer.aim.scaleX = next.scaleX;
+
+        if (!aimTracking.isAimSettled(layer.aim, target)) allSettled = false;
+
+        const transform = aimTracking.aimTransform(layer.aim, layer.aim);
+        for (const w of layer.wrappers) {
+          w.setAttribute("transform", transform);
+        }
+        continue;
+      }
+
       // Scale the pre-calculated offset (from tick.js, already in [-maxOffset, maxOffset])
       // to this layer's range. No second normalization — tick.js already did it.
       const [tx, ty] = _getLayerTarget(layer, rawDx, rawDy);
@@ -3309,6 +3367,8 @@ function _cleanupLayeredTracking() {
   _trackingLayers = null;
   _layerTargetDx = 0;
   _layerTargetDy = 0;
+  _aimSample = null;
+  _aimViewBox = null;
   _layeredTrackingObj = null;
   _layeredTrackingDocument = null;
 }
@@ -3548,7 +3608,7 @@ function recoverFromSystemWake(payload) {
   finishSystemWake(status);
 }
 
-window.electronAPI.onEyeMove((dx, dy) => {
+window.electronAPI.onEyeMove((dx, dy, aim) => {
   const effectiveDx = miniLeftFlip ? -dx : dx;
   lastEyeDx = effectiveDx;
   lastEyeDy = dy;
@@ -3571,6 +3631,12 @@ window.electronAPI.onEyeMove((dx, dy) => {
     // Layered tracking: store targets, RAF loop handles easing
     _layerTargetDx = effectiveDx;
     _layerTargetDy = dy;
+    // Aim layers rotate by the direction to the *unclipped* cursor, which the
+    // eye offset above cannot express — tick.js sends it alongside. No sample
+    // (state change, mouse idle, an older main) means "back to rest".
+    _aimSample = aimTracking.normalizeAimSample(aim);
+    const viewBox = _aimSample ? resolveViewBox(currentState, currentDisplayedSvg) : null;
+    _aimViewBox = viewBox && viewBox.width > 0 && viewBox.height > 0 ? viewBox : null;
     _startLayerAnimLoop();
     return;
   }

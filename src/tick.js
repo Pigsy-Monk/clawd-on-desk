@@ -20,6 +20,7 @@ let idleLookAttempt = null;
 let yawnDelayTimer = null;     // tracked setTimeout for yawn/idle-look transitions
 let idleWasActive = false;
 let lastEyeDx = 0, lastEyeDy = 0;
+let lastAimSample = null;      // last raw cursor sample sent for aim layers
 let lastPointerBridgeKey = null;
 let lastPointerBridgePayload = null;
 let mainTickTimer = null;
@@ -60,6 +61,18 @@ let IDLE_EASTER_EGGS = [];
 const idleEasterEggLastPlayedAt = new Map();
 let SLEEP_MODE = "full";
 let THEME_SUPPORTS_DIZZY = false;
+// True when the theme declares at least one aim layer (mode "rotate" /
+// "foreshorten"). Only then is the raw cursor sample computed and shipped with
+// each eye-move — themes that never declare one keep the exact IPC shape they
+// have always had.
+let THEME_HAS_AIM_LAYERS = false;
+
+function themeHasAimLayers(t) {
+  const layers = t && t.eyeTracking && t.eyeTracking.trackingLayers;
+  if (!layers || typeof layers !== "object") return false;
+  return Object.values(layers).some((layer) => !!layer && typeof layer === "object"
+    && (layer.mode === "rotate" || layer.mode === "foreshorten"));
+}
 
 function refreshTheme() {
   theme = ctx.theme;
@@ -80,6 +93,7 @@ function refreshTheme() {
   THEME_SUPPORTS_DIZZY = !!(theme.states && Array.isArray(theme.states.dizzy) && theme.states.dizzy.length > 0
     && theme.timings && theme.timings.autoReturn
     && Number.isFinite(theme.timings.autoReturn.dizzy) && theme.timings.autoReturn.dizzy > 0);
+  THEME_HAS_AIM_LAYERS = themeHasAimLayers(theme);
 }
 
 refreshTheme();
@@ -398,7 +412,10 @@ function runMainTickOnce() {
       // 60s no mouse movement → yawning → dozing
       if (!hasTriggeredYawn && elapsed >= MOUSE_SLEEP_TIMEOUT) {
         hasTriggeredYawn = true;
-        if (!isMouseIdle && !shouldSuppressPassiveIpc()) ctx.sendToRenderer("eye-move", 0, 0);
+        if (!isMouseIdle && !shouldSuppressPassiveIpc()) {
+          lastAimSample = null;
+          ctx.sendToRenderer("eye-move", 0, 0);
+        }
         if (SLEEP_MODE === "direct") {
           if (ctx.currentState === "idle") ctx.setState("sleeping");
         } else {
@@ -432,7 +449,10 @@ function runMainTickOnce() {
         isMouseIdle = true;
         idleLookPlayed = true;
         const pick = easterEgg || pool[Math.floor(random() * pool.length)];
-        if (!shouldSuppressPassiveIpc()) ctx.sendToRenderer("eye-move", 0, 0);
+        if (!shouldSuppressPassiveIpc()) {
+          lastAimSample = null;
+          ctx.sendToRenderer("eye-move", 0, 0);
+        }
         yawnDelayTimer = setTimeout(() => {
           yawnDelayTimer = null;
           if (easterEgg && !isIdleEasterEggEligible(easterEgg)) {
@@ -546,10 +566,33 @@ function runMainTickOnce() {
     eyeDx = Math.max(-xClamp, Math.min(xClamp, eyeDx));
     eyeDy = Math.max(-yClamp, Math.min(yClamp, eyeDy));
 
-    if (skipDedup || eyeDx !== lastEyeDx || eyeDy !== lastEyeDy) {
+    // Aim layers need the *unclipped* cursor: the offset above is saturated at
+    // ±maxOffset, so every direction beyond that radius would collapse to one
+    // angle. Ship the cursor relative to the art rect instead — same pixel
+    // space, no clamping, no rounding — and let the renderer do the geometry.
+    let aimSample = null;
+    if (THEME_HAS_AIM_LAYERS && obj) {
+      aimSample = {
+        x: cursor.x - obj.x,
+        y: cursor.y - obj.y,
+        w: obj.w,
+        h: obj.h,
+      };
+    }
+    const aimChanged = !!aimSample && (!lastAimSample
+      || lastAimSample.x !== aimSample.x
+      || lastAimSample.y !== aimSample.y
+      || lastAimSample.w !== aimSample.w
+      || lastAimSample.h !== aimSample.h);
+
+    if (skipDedup || aimChanged || eyeDx !== lastEyeDx || eyeDy !== lastEyeDy) {
       lastEyeDx = eyeDx;
       lastEyeDy = eyeDy;
-      ctx.sendToRenderer("eye-move", eyeDx, eyeDy);
+      lastAimSample = aimSample;
+      // Themes without aim layers keep the exact two-argument shape they have
+      // always had; the sample slot only appears when there is one to send.
+      if (aimSample) ctx.sendToRenderer("eye-move", eyeDx, eyeDy, aimSample);
+      else ctx.sendToRenderer("eye-move", eyeDx, eyeDy);
     }
 
     // --- Spin detection: detect sustained circling around the pet to trigger dizzy ---
