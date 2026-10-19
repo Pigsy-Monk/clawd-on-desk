@@ -70,6 +70,32 @@ Clawd 是主题化桌宠：动画资源、计时、hitbox、眼球追踪参数�
 
 主题创建流程见 `docs/guides/guide-theme-creation.md`。
 
+### Aim Tracking（炮管跟随）
+
+`eyeTracking.trackingLayers` 的图层默认只做平移；加 `mode` 后可以跟随光标**转动**，用来做「炮塔/炮管指着鼠标」。字段表：
+
+| 字段 | 取值 | 作用 |
+|---|---|---|
+| `mode` | `"translate"`（默认）/ `"rotate"` / `"foreshorten"` | 图层怎么跟随。不写就是 `translate`，老主题行为完全不变 |
+| `ids` / `classes` | 字符串数组 | 要控制的目标元素（两个 aim 模式同样用它选元素） |
+| `ease` | 0~1，每帧插值系数 | 和 translate 层同义，默认 0.15 |
+| `pivot` | `[x, y]`，viewBox 单位 | `rotate` 的转轴 / `foreshorten` 的缩放基点；aim 模式下必填 |
+| `aimOrigin` | `[x, y]`，viewBox 单位，默认 = `pivot` | 从这一点朝光标连线算角度。转轴在座圈、瞄准点在炮管根部时两者不同 |
+| `restAngle` | 度，屏幕坐标（负 = 朝上），默认 0 | 美术里炮管本来指的方向（dahu 是 −14） |
+| `minAngle` / `maxAngle` | 度，相对 `restAngle`，SVG `rotate()` 正负号 | `rotate` 的转动上下限，必填，且必须 `minAngle <= 0 <= maxAngle`（静止角始终可达） |
+| `maxAngle`（`foreshorten`） | 度，必须 > 0 | 偏航幅度：身后 80 viewBox 单位处到满值 |
+| `rampPx` | px，默认 160，0 = 关闭 | 光标离 `aimOrigin` 多近时按比例收回到 `restAngle`，避免光标贴着宠物时乱转 |
+| `behind` | `"mirror"`（默认）/ `"clamp"` | 只给 `rotate`：光标在宠物身后（左边）时，镜像成同样的仰角，还是让原始角度贴到上下限 |
+| `when` | `"behind"`（默认，目前唯一取值） | 只给 `foreshorten`：什么时候缩短 |
+
+- **`rotate`**：绕 `pivot` 转 `clamp(方向角 − restAngle, minAngle, maxAngle) × ramp` 度。方向角是光标相对 `aimOrigin` 的 `atan2`；`behind: "mirror"` 把身后的光标折到同一仰角，`"clamp"` 让原始角度撞上下限。写 `rotate(a px py)`。
+- **`foreshorten`**：光标在身后时沿图层自身 x 轴按 `cos(yaw)` 缩短，侧视图里用它暗示「朝镜头转过来」。它不旋转，写 `translate(px py) scale(k 1) translate(-px -py)`，所以目标元素要套在旋转层里（炮管自己的 x 轴就是炮管轴向）。
+- **数据来源**：tick.js 随 `eye-move` 多发一份**未裁剪**的光标样本（光标相对素材矩形的坐标 + 矩形尺寸，device px）。眼球位移被 `maxOffset` 夹住且量化过，算角度不准。没有样本时（状态切换、鼠标静止、老版本 main）两个模式都缓动回静止位——这就是 `eye-move(0, 0)` 的归零语义。
+- **镜像**：宠物被画成镜像时（mini 贴左边缘、朝左漫游）角度要反号，判据与素材朝向共用 `src/pet-accessory-mirror.js`（`miniLeftFlip !== shouldApplyMiniAssetFlip(state)`）。翻转本身不重发样本，所以宠物翻转后要等下一次光标移动才更新，和 translate 层一致。
+- **兼容**：没有 `mode` 的图层（clawd、calico 等全部现有主题）继续走原来的 translate 路径；主题没有 aim 图层时连样本都不发，`eye-move` 的 IPC 形状和以前完全一样。
+- 校验：`src/theme-schema.js` 检查模式、字段归属、类型与范围（非法值报错，主题会回退到 clawd）；`scripts/validate-theme.js` 另外检查 aim 层的目标元素在该 SVG 里存在、`pivot` 落在有效 viewBox 内（`aimOrigin` 出界只告警）。
+- 数学在 `src/aim-tracking.js`（纯函数，浏览器与 Node 共用），渲染接线在 `src/renderer.js` 的 `_initLayeredTracking` / `_startLayerAnimLoop`。
+
 ### Displayed visual settlement
 
 main 中的 displayed-visual projection 是文件、hitbox 和视觉来源的唯一权威。renderer 对每个仍有效的 request 恰好返回一个终结结果：正常加载为 `swapped`，当前文件已经显示为 `already-displayed`，实际显示了可投影的替代文件为 `fallback`，无法验证则为 `failed`；被后续请求取代的 generation 由 main 标为 `superseded`，renderer 不伪造 ACK。
@@ -320,6 +346,7 @@ Mini 状态映射：
 - 4 连击 → 双手拍反应
 - 拖拽 → 持续拖拽反应
 - 反应动画期间会暂时 detach 眼球追踪
+- **点击台词池**：`reactions.clickLeft` / `clickRight` 除了 `file` 还可以写 `files: [...]`，单击结算到左/右时从池里随机挑一个播（4 连击的 `double` 一直是这个规则）。`files` 非空时优先于 `file`；池里没有可用文件时回退 `file`，两者都没有就什么都不播。台词气泡画在主题 SVG 自己的 viewBox 预留区里（白底圆角气泡 + 小尾巴，系统字体），引擎只负责挑文件和计时，`duration` 是气泡停留时长
 
 ### Test Result Reactions
 

@@ -4,6 +4,19 @@ const { contextBridge, ipcRenderer } = require("electron");
 const themeArg = process.argv.find(a => a.startsWith("--theme-config="));
 const themeConfig = themeArg ? JSON.parse(themeArg.slice("--theme-config=".length)) : null;
 
+// The aim sample rides along with eye-move for themes with rotate/foreshorten
+// tracking layers: the cursor relative to the art rect's top-left corner plus
+// that rect's size, in device px. Validated here (not only in the renderer) so a
+// malformed sample never crosses the bridge; `null` means "no sample", which is
+// how the renderer's eye-move(0, 0) zeroing returns the aim to rest.
+function normalizeAimSample(aim) {
+  if (!aim || typeof aim !== "object") return null;
+  const { x, y, w, h } = aim;
+  if (![x, y, w, h].every((value) => typeof value === "number" && Number.isFinite(value))) return null;
+  if (!(w > 0) || !(h > 0)) return null;
+  return { x, y, w, h };
+}
+
 contextBridge.exposeInMainWorld("themeConfig", themeConfig);
 
 contextBridge.exposeInMainWorld("electronAPI", {
@@ -24,7 +37,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // State sync from main
   onStateChange: (callback) => ipcRenderer.on("state-change", (_, requestOrState, legacySvg) => callback(requestOrState, legacySvg)),
   onKimiPermissionPulse: (callback) => ipcRenderer.on("kimi-permission-pulse", () => callback()),
-  onEyeMove: (callback) => ipcRenderer.on("eye-move", (_, dx, dy) => callback(dx, dy)),
+  // The third argument is the aim sample for themes with rotate/foreshorten
+  // tracking layers (see normalizeAimSample above).
+  onEyeMove: (callback) => ipcRenderer.on("eye-move", (_, dx, dy, aim) => callback(dx, dy, normalizeAimSample(aim))),
   onCloudlingPointer: (callback) => ipcRenderer.on("cloudling-pointer", (_, payload) => callback(payload)),
   onRoamHeading: (callback) => ipcRenderer.on("roam-heading", (_, headingLeft) => callback(headingLeft)),
   onPetScreenSide: (callback) => ipcRenderer.on("pet-screen-side", (_, onRight) => callback(onRight)),

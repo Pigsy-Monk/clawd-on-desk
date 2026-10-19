@@ -248,6 +248,8 @@ Eye tracking makes the character follow the user's cursor. It requires the idle 
 
 Advanced SVG themes may use `eyeTracking.trackingLayers` instead of the legacy single `ids` map when different character layers need different cursor-follow strength. See `themes/calico/theme.json` for a working example.
 
+A layer may also declare `"mode": "rotate"` or `"mode": "foreshorten"` to turn with the cursor instead of translating (turret / gun follow). Those modes need a `pivot` plus, for `rotate`, `minAngle` / `maxAngle`; the field table, semantics and mirroring rules are in `docs/project/theme-state-ui.md` → Aim Tracking, and `node scripts/validate-theme.js <theme-dir>` checks the pivot against the viewBox.
+
 ### Capability Switches
 
 The existing schema fields are the only runtime truth. They already act as the theme's capability switches:
@@ -414,7 +416,7 @@ Click and drag response animations:
 ```
 
 - `drag` — plays while being dragged (no duration, loops until released). Optional `fileLeft` / `fileRight` play when dragging horizontally in that direction; omitted directions fall back to `file`.
-- `clickLeft` / `clickRight` — double-click reaction, direction-aware
+- `clickLeft` / `clickRight` — double-click reaction, direction-aware. Both also accept a `files` pool and pick one at random, which is how a theme makes the pet say one of several click lines; a non-empty `files` wins over `file`
 - `annoyed` — 50% chance on double-click instead of directional
 - `double` — 4-click rapid reaction, `files` array for random selection
 
