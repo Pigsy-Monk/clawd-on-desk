@@ -67,6 +67,11 @@ function createNoticeScreenRuntime(options = {}) {
   const onPoseEnded = options.onPoseEnded || (() => {});
   // Right-click on the board: return true to take it instead of copying.
   const onBoardContextMenu = options.onBoardContextMenu || (() => false);
+  // No sign up, but a notice's card is still waiting behind it: return true to
+  // hand it over on a plain click, false to let the click be an ordinary poke.
+  const onHeldCardClick = typeof options.onHeldCardClick === "function"
+    ? options.onHeldCardClick
+    : null;
   const now = options.now || (() => Date.now());
 
   // The pose main asked for: which notice, which file. Set on begin(), cleared
@@ -202,11 +207,19 @@ function createNoticeScreenRuntime(options = {}) {
 
   // Left-click from the hit window while the sign is up. True means it landed
   // on the board and the card was asked for; false means it was an ordinary
-  // click on the pet.
+  // click on the pet. With the sign down, a card may still be waiting behind
+  // it: onHeldCardClick lets main hand that card over on a plain click.
   function handleHitClick(event, point) {
-    if (!isPoseLive()) return false;
     const hitWc = getHitWebContents();
     if (!event || !isLiveWebContents(hitWc) || event.sender !== hitWc) return false;
+    if (!isPoseLive()) {
+      if (!onHeldCardClick) return false;
+      try {
+        return onHeldCardClick() === true;
+      } catch {
+        return false;
+      }
+    }
     const input = point && typeof point === "object" ? point : {};
     const viewBoxPoint = toViewBoxPoint(input.clientX, input.clientY);
     if (!viewBoxPoint || !pointInRect(viewBoxPoint, reported.rect)) return false;

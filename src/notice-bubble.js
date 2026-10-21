@@ -17,7 +17,7 @@ const LINUX_WINDOW_TYPE = "toolbar";
 // CSS px (multiple of 20 → integral DIP width at every 5% textScale step).
 const WIDTH = 340;
 const EDGE_MARGIN = 8;
-const GAP = 6;
+const GAP = 2;
 const MAX_WORK_AREA_WIDTH_RATIO = 0.9;
 // A stack taller than this scrolls inside its own window instead of growing
 // past the display; the page caps its painted height to match.

@@ -216,9 +216,11 @@ document.addEventListener("pointerup", (e) => {
     return;
   }
 
-  // While the notice sign is up, a click on the board opens the notice's
-  // card instead of counting as a poke; main knows where the board is.
-  if (noticeScreenActive && typeof window.hitAPI.noticeScreenClick === "function") {
+  // A click may belong to the notice sign: on the board it opens the notice's
+  // card, and with the sign already down main may still be holding a card
+  // behind it. Main answers true when it took the click; otherwise the click
+  // is an ordinary poke.
+  if (typeof window.hitAPI.noticeScreenClick === "function") {
     const clientX = e.clientX;
     window.hitAPI.noticeScreenClick({ clientX, clientY: e.clientY }).then((handled) => {
       if (!handled) handleClick(clientX);

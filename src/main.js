@@ -2381,6 +2381,13 @@ const noticeScreenRuntime = createNoticeScreenRuntime({
     _menu.showStretchMenu({ onBoard: true });
     return true;
   },
+  // The sign is down but its notice's card is still held back: a plain click
+  // on the pet hands it over, so a short sign is never a dead end.
+  onHeldCardClick: () => {
+    if (!_noticeBubble || typeof _noticeBubble.hasHeldNotices !== "function") return false;
+    if (!_noticeBubble.hasHeldNotices()) return false;
+    return _noticeBubble.revealHeldNotices() > 0;
+  },
 });
 
 // ── A notice while docked (src/mini-notice-popout.js) ──
