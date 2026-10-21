@@ -1,0 +1,61 @@
+test/notice-bubble.test.js
+  s_4d6cdf84938b0a::t_5ae19d59054bca 913-917
+  s_4d6cdf84938b0a::t_2bfe7dbcdd62bb 377
+  s_4d6cdf84938b0a::t_62c7cfb35b7f26 905-909,919
+  s_4d6cdf84938b0a::t_7573d4438caf4a 910-912,918
+  s_4d6cdf84938b0a::t_c839840c12905a 897-904,920-922,924-938
+  s_4d6cdf84938b0a::t_f3f0fec51d511b 923
+src/notice-bubble.js
+  s_4d6cdf84938b0a::t_b8054ded1e69eb 20
+src/hit-renderer.js
+  s_4d6cdf84938b0a::t_ab471e9fc24a39 219-223
+test/notice-screen-runtime.test.js
+  s_4d6cdf84938b0a::t_85c65ed8c87baa 265,271-274
+  s_4d6cdf84938b0a::t_fc08f9b77ff7e2 220-238
+  s_4d6cdf84938b0a::t_7ee0c9167b7186 256,266-270
+src/main.js
+  s_4d6cdf84938b0a::t_293552a56e21c2 2384-2390
+src/notice-bubble.html
+  s_4d6cdf84938b0a::t_30d65191b0fcff 625,627
+  s_4d6cdf84938b0a::t_4a333786265d2a 628,632,640,652,685,689,710,712,714,716-717,720-721,727,2362,2365
+  s_4d6cdf84938b0a::t_7887f645dd3a60 618-624,639,650,653-655,657-660,675-680,695,700,707-709,711,723-724,726
+  s_4d6cdf84938b0a::t_61a7fc19f86734 2428-2429
+  s_4d6cdf84938b0a::t_db647ac70de722 2466-2468,2470
+  s_4d6cdf84938b0a::t_c3dbaa54b2b1b9 2566
+  s_4d6cdf84938b0a::t_bf384d28f2e244 2425-2427
+  s_4d6cdf84938b0a::t_dafbaaf0fe68a3 2547-2549
+  s_4d6cdf84938b0a::t_0deb1f5bc56895 2595-2598
+  s_4d6cdf84938b0a::t_957497a38c00dc 617,626,631,633-638,641-649,651,656,661-674,681-684,686-688,713,715,718-719,722,728
+  s_4d6cdf84938b0a::t_4126e6c02a843c 629
+  s_4d6cdf84938b0a::t_46a7a6964d6d7e 690-694,697,699,701,704
+  s_4d6cdf84938b0a::t_08c330c0818d5a 630
+  s_4d6cdf84938b0a::t_2ab7e2cac4830d 725
+  s_4d6cdf84938b0a::t_a4bd2b42318624 2420-2422,2430-2435
+  s_4d6cdf84938b0a::t_36ea7f64b1c6a2 2520-2521
+  s_4d6cdf84938b0a::t_15790074df4ae3 2561,2565,2567
+  s_4d6cdf84938b0a::t_f608b66dfd7000 702-703,705-706
+  s_4d6cdf84938b0a::t_8997f010c1cec3 2089-2091
+  s_4d6cdf84938b0a::t_b37fd683e5b0ef 2363-2364,2381-2389,2392-2417,2440-2441,2443-2449,2451-2454
+  s_4d6cdf84938b0a::t_5f88abc5ddb44d 2360-2361,2366-2380,2390-2391,2418-2419,2423-2424,2436-2439,2442,2450,2455-2465,2469,2471-2476
+  s_4d6cdf84938b0a::t_d4ad7e7cdc4456 2357-2359
+  s_4d6cdf84938b0a::t_9da6a22174c072 696,698
+src/notice-screen-runtime.js
+  s_4d6cdf84938b0a::t_6f23bde45ffee5 210-211,215-222
+  s_4d6cdf84938b0a::t_a599e3a95458f7 70-74
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.51-trip",
+  "base_commit_sha": "4357d9cc18afc204f04ddc5139a87efb7b0465e3",
+  "prompts": {},
+  "sessions": {
+    "s_4d6cdf84938b0a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7dbb2059-454b-482c-b27a-752f9924c770",
+        "model": "deepseek-v4-1-flash-261017"
+      },
+      "human_author": "zwsong <zwsong@trip.com>"
+    }
+  }
+}
