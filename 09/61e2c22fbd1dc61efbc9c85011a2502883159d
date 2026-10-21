@@ -1,0 +1,71 @@
+src/renderer.js
+  s_fa7684e93f0db3::t_885c41e0965707 640,643-644
+  s_fa7684e93f0db3::t_ef5a0d426a01df 3289-3292,3299,1359,1880
+  s_fa7684e93f0db3::t_6f9b3e862606d7 1324-1327
+  s_fa7684e93f0db3::t_5efbf3f2af3f4a 1355,1357,1360-1362,1371-1374,1377-1378
+  s_fa7684e93f0db3::t_ace1a7523e26ac 1358,1877-1879,1882
+  s_fa7684e93f0db3::t_8121a311505e2d 1394
+  s_fa7684e93f0db3::t_a2e4dbb09aa7da 1407-1409
+  s_fa7684e93f0db3::t_5b8d5c058f85f3 1426-1427
+  s_fa7684e93f0db3::t_5c322badb89d86 1571-1573
+  s_fa7684e93f0db3::t_437a747abd06df 1618,1633,1677-1683,1685-1689
+  s_fa7684e93f0db3::t_800b061ae6661b 1620,1622-1632,1635,1637-1638,1642,1646,1648-1649
+  s_fa7684e93f0db3::t_b7eec33947e134 1778,1785
+  s_fa7684e93f0db3::t_3971b50c950343 1831,1833
+  s_fa7684e93f0db3::t_b8815ca31de1d5 1852
+  s_fa7684e93f0db3::t_70905f76b57c65 1911
+  s_fa7684e93f0db3::t_993967b1112696 1933,1940,1943
+src/notice-screen-layout.js
+  s_fa7684e93f0db3::t_9863b250fd58e2 1-5
+  s_fa7684e93f0db3::t_7789bcd24f1c2e 72,78-189
+  s_fa7684e93f0db3::t_205ff0df16df86 216-221,224-230,232,234-235,239,244-247
+  s_fa7684e93f0db3::t_c123efef1a3c7d 379-385,391-393,395-396,400
+  s_fa7684e93f0db3::t_0c70b1f075753d 447-449
+src/theme-schema.js
+  s_fa7684e93f0db3::t_7579dd778ec56e 87-206,268,270
+test/renderer-low-power.test.js
+  s_fa7684e93f0db3::t_2ecc6b95a93e12 9-20
+  s_fa7684e93f0db3::t_a5a954ec07b765 3431-3512
+AGENTS.md
+  s_fa7684e93f0db3::t_1128568d8a452d 144
+test/notice-reaction.test.js
+  s_fa7684e93f0db3::t_ced1fb0b7f9301 231-272
+  s_fa7684e93f0db3::t_53db0fc090e1c4 276
+  s_fa7684e93f0db3::t_c52fadd48a808b 286-295
+themes/calico/assets/calico-notice-screen.svg
+  s_fa7684e93f0db3::t_ff4958a650c602 1-350
+test/calico-notice-screen-asset.test.js
+  s_fa7684e93f0db3::t_d027b9afe93fb5 1-93
+docs/project/theme-state-ui.md
+  s_fa7684e93f0db3::t_684655b2990615 73-98,350,362-363
+src/main.js
+  s_fa7684e93f0db3::t_f516231bde764c 208,1743-1744,2386-2399,2401-2407,2412,6047-6049
+  s_fa7684e93f0db3::t_8066c30ce09643 1745-1749,2400,2408-2411,2413-2414,2434,6093,6131
+themes/calico/theme.json
+  s_fa7684e93f0db3::t_0df8c1027e2462 7-11,33-40,220-221,264-301,388-389,495-498
+  s_fa7684e93f0db3::t_7a66e2c0069819 222-225
+test/mini-notice-popout.test.js
+  s_fa7684e93f0db3::t_6fbbc88f650eef 1-151
+test/notice-screen-layout.test.js
+  s_fa7684e93f0db3::t_8d1c7b01cd5ad6 246-346
+src/mini-notice-popout.js
+  s_fa7684e93f0db3::t_e327ff7e8560e7 1-139
+src/notice-reaction.js
+  s_fa7684e93f0db3::t_d9279da5127aa1 46-62,78-82,84-85,94-102,108-114,133,142
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.51-trip",
+  "base_commit_sha": "0961e2c22fbd1dc61efbc9c85011a2502883159d",
+  "prompts": {},
+  "sessions": {
+    "s_fa7684e93f0db3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "54830dbf-2d5f-468b-9dba-2ecd4240c943",
+        "model": "claude-opus-5.5"
+      },
+      "human_author": "zwsong <zwsong@trip.com>"
+    }
+  }
+}
