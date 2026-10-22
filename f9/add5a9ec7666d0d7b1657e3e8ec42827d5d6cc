@@ -1,0 +1,59 @@
+src/notice-store.js
+  s_524f90287b9754::t_6809f00401905d 484-485
+  s_524f90287b9754::t_8269a4fd17fd9b 148-155
+  s_524f90287b9754::t_24b01c97ebca8b 49-56
+  s_524f90287b9754::t_3fd1ccc9d99f25 500
+  s_524f90287b9754::t_d343e9dd15b3f8 314,324
+src/notice-bubble.js
+  s_524f90287b9754::t_2dd46f52e439ff 665-678,680
+  s_524f90287b9754::t_cde799154babc7 694
+src/notice-screen-runtime.js
+  s_524f90287b9754::t_0eee3890d77f75 287
+  s_524f90287b9754::t_2b3b460362c887 108,110,119
+  s_524f90287b9754::t_16041dc21e0224 177-179,181-184
+  s_524f90287b9754::t_9cd6ec4c12dad8 85-88
+  s_524f90287b9754::t_797f0b4da06385 157-160,167-176,180,186-188,190-192
+test/notice-bubble.test.js
+  s_524f90287b9754::t_64ffd2c1569f30 463-479
+src/notice-reaction.js
+  s_524f90287b9754::t_9a37463a74715e 108-112,121
+src/prefs-live-reload.js
+  s_524f90287b9754::t_6cae22ebdc3f1c 1-214
+test/notice-reaction.test.js
+  s_524f90287b9754::t_46ea6ace99954c 223-236
+  s_524f90287b9754::t_d70998b746216f 215-222,237-244
+test/prefs-live-reload.test.js
+  s_524f90287b9754::t_07740d01486eca 1-141
+test/notice-screen-runtime.test.js
+  s_524f90287b9754::t_4b7b6b86901da7 307-339
+test/notice-store.test.js
+  s_524f90287b9754::t_4576f9cf13b467 750-779
+test/notice-route.test.js
+  s_524f90287b9754::t_06ba13f144e921 74-89
+src/main.js
+  s_524f90287b9754::t_cea5c5415228a9 1767,1776
+  s_524f90287b9754::t_66b5371c5a8299 6664
+  s_524f90287b9754::t_1889ad56ae880a 6121-6123
+  s_524f90287b9754::t_f5a9591a2a9c3e 1771-1775,1777
+  s_524f90287b9754::t_8451e6466ff0e3 348
+  s_524f90287b9754::t_be62fb6fefac18 2462-2465
+  s_524f90287b9754::t_a4c41492ec484a 665-677
+src/server-route-notice.js
+  s_524f90287b9754::t_65fe1c2ee7eafa 102-105,111-112
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.51-trip",
+  "base_commit_sha": "f9add5a9ec7666d0d7b1657e3e8ec42827d5d6cc",
+  "prompts": {},
+  "sessions": {
+    "s_524f90287b9754": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "52e2f200-1355-4ddd-b87c-9448f2c49c6a",
+        "model": "deepseek-v4-1-flash-261017"
+      },
+      "human_author": "zwsong <zwsong@trip.com>"
+    }
+  }
+}
