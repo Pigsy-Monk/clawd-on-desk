@@ -105,7 +105,11 @@ function createNoticeReactionHandler(options = {}) {
   function handleNoticeReaction(notice, context = {}) {
     const payload = buildNoticeReactionPayload(notice);
     if (!payload) return false;
-    if (canPlayMini(context)) {
+    // A push that asked for its card (`presentation: "card"`) still gets the
+    // ordinary level reaction, but never the sign: the sign is what holds the
+    // card back, and this notice wants the card on screen now.
+    const skipSign = context.skipSign === true;
+    if (!skipSign && canPlayMini(context)) {
       try {
         return playMiniSign(payload, notice) === true;
       } catch {
@@ -114,7 +118,7 @@ function createNoticeReactionHandler(options = {}) {
     }
     if (!canPlay(context)) return false;
 
-    if (playNoticeScreen) {
+    if (!skipSign && playNoticeScreen) {
       let handled = false;
       try {
         handled = playNoticeScreen(payload, notice) === true;

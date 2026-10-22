@@ -662,10 +662,22 @@ module.exports = function initNoticeBubble(ctx) {
     return { ...stretchCard, board: { ...board, elapsed } };
   }
 
-  function shouldHold(fresh) {
-    if (fresh.length === 0 || typeof ctx.shouldHoldNewNotices !== "function") return false;
+  // Per notice, because a push may ask for its card (`presentation: "card"`,
+  // src/notice-store.js): that one must not wait behind the sign the pet is
+  // holding up for a different, sign-presented notice. ctx.shouldHoldNotice is
+  // the current contract; shouldHoldNewNotices is the older whole-batch one,
+  // still honoured for callers that only have it.
+  function shouldHold(notice) {
+    if (typeof ctx.shouldHoldNotice === "function") {
+      try {
+        return ctx.shouldHoldNotice(notice) === true;
+      } catch {
+        return false;
+      }
+    }
+    if (typeof ctx.shouldHoldNewNotices !== "function") return false;
     try {
-      return ctx.shouldHoldNewNotices(fresh) === true;
+      return ctx.shouldHoldNewNotices([notice]) === true;
     } catch {
       return false;
     }
@@ -679,7 +691,7 @@ module.exports = function initNoticeBubble(ctx) {
     for (const id of heldIds) if (!ids.has(id)) heldIds.delete(id);
     const fresh = seenIds ? allNotices.filter((n) => !seenIds.has(n.id)) : [];
     seenIds = ids;
-    if (shouldHold(fresh)) for (const n of fresh) heldIds.add(n.id);
+    for (const n of fresh) if (shouldHold(n)) heldIds.add(n.id);
     notices = allNotices.filter((n) => !heldIds.has(n.id));
     if (!hasContent()) {
       hideNoticeBubble();

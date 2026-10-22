@@ -212,6 +212,36 @@ describe("notice reaction payload", () => {
     assert.strictEqual(gated.handle(notice), false);
   });
 
+  it("skipSign keeps the per-level reaction but never raises the head screen", () => {
+    const screens = [];
+    const { calls, handle } = openHandler({
+      playNoticeScreen: (payload) => { screens.push(payload); return true; },
+    });
+    assert.strictEqual(handle({ id: "n3", level: "error", title: "down" }, { skipSign: true }), true);
+    assert.deepStrictEqual(screens, [], "the sign is what holds the card back");
+    assert.deepStrictEqual(calls, [["play-notice-reaction", { level: "error", id: "n3", title: "down" }]]);
+  });
+
+  it("skipSign does not jump the pet out of mini mode to show a sign", () => {
+    const minis = [];
+    const { calls, handle } = openHandler({
+      getMiniMode: () => true,
+      hasMiniSign: () => true,
+      playMiniSign: (payload) => { minis.push(payload); return true; },
+    });
+    // In mini mode the ordinary reaction gate is closed, so nothing plays —
+    // what matters is that the pet stays docked.
+    assert.strictEqual(handle({ id: "n5", level: "info", title: "hi" }, { skipSign: true }), false);
+    assert.deepStrictEqual(minis, []);
+    assert.deepStrictEqual(calls, []);
+  });
+
+  it("a skipSign notice still obeys the gate", () => {
+    const { calls, handle } = openHandler({ getDoNotDisturb: () => true });
+    assert.strictEqual(handle({ id: "n4", level: "info", title: "hi" }, { skipSign: true }), false);
+    assert.deepStrictEqual(calls, []);
+  });
+
   it("answers the same gate up front through canPlay, without playing anything", () => {
     const open = openHandler({ playNoticeScreen: () => { throw new Error("must not be reached"); } });
     assert.strictEqual(open.handle.canPlay(), true);

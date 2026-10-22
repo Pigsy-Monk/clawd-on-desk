@@ -345,6 +345,7 @@ const SIZES = {
 // `_settingsController.applyUpdate()`, which auto-persists.
 const prefsModule = require("./prefs");
 const { createSettingsController } = require("./settings-controller");
+const { createPrefsLiveReload } = require("./prefs-live-reload");
 const { loadOrCreateInstallationIdentity } = require("./remote-ssh-identity");
 const { createTranslator, i18n, SUPPORTED_LANGS } = require("./i18n");
 const { setClaudeCollectionWithConsent } = require("./claude-statusline-consent");
@@ -661,6 +662,19 @@ const _settingsController = createSettingsController({
     },
   },
 });
+// A hand edit of clawd-prefs.json used to need a restart, because the file is
+// read once above. Watch it and import the changed keys into the live store
+// (no pre-commit effects — see src/prefs-live-reload.js). This is what lets a
+// caller tune a notice/bubble duration and see the next card use it.
+const prefsLiveReload = createPrefsLiveReload({
+  prefsPath: PREFS_PATH,
+  prefs: prefsModule,
+  controller: _settingsController,
+  onError: (err) => console.warn("Clawd: live prefs reload failed:", err && err.message),
+});
+try { prefsLiveReload.start(); } catch (err) {
+  console.warn("Clawd: could not watch prefs:", err && err.message);
+}
 _settingsController.subscribeKey("agents", (_agents, snapshot) => {
   // A readable future-version prefs file may still change in memory for the
   // current process. An unreadable prefs file rejects mutations earlier in the
@@ -1750,10 +1764,17 @@ function canShowAnyNoticeSign() {
 function requestNoticeScreenReaction(payload, notice) {
   const file = resolveNoticeScreenFile();
   if (!file) return false;
-  noticeScreenRuntime.begin(payload, notice, file);
+  const signToken = noticeScreenRuntime.begin(payload, notice, file);
   let delivered = false;
   requestDisplayedVisual(_state.getCurrentState(), file, {
     source: "reaction",
+    // A sign the renderer refuses (or that is superseded before it lands) must
+    // release the card it was holding back. Sending the message is not the
+    // same as the sign being on screen.
+    onLogicalSettlement: (settled) => {
+      if (settled && settled.status === "committed") return;
+      noticeScreenRuntime.abandon(payload.id, signToken);
+    },
     deliver: (visualRequest) => {
       delivered = sendRawToRenderer("play-notice-reaction", { ...payload, visualRequest });
       return delivered;
@@ -2438,7 +2459,10 @@ const _noticeBubbleCtx = {
   // is defined further down and only consulted once notices arrive.
   // During a stretch break every new card waits (no sign, no card) until the
   // break's card is gone; the store's expiry is paused meanwhile.
-  shouldHoldNewNotices: (fresh) => isStretchBusy() || (!fresh.some(isPoseNotice) && canShowAnyNoticeSign()),
+  // A push that asked for its card (`presentation: "card"`, src/notice-store.js)
+  // is never held: it is shown straight away, for its ttl, with no click.
+  shouldHoldNotice: (notice) => isStretchBusy()
+    || (!isPoseNotice(notice) && notice.presentation !== "card" && canShowAnyNoticeSign()),
   onStretchAction: (action) => !!(stretchRuntime && stretchRuntime.handleAction(action)),
   get win() { return win; },
   // Deliberate: the notice stack is the pet "speaking", so it always follows
@@ -6094,7 +6118,9 @@ function reactToNewestNotice(newest) {
   }
   // The whole notice: the handler takes level, id and headline from it, and
   // the sign keeps it for copy-on-right-click.
-  handleNoticeReaction(newest);
+  // `presentation: "card"` skips the sign, which is the only thing that holds
+  // a card back — the card is already on screen and stays for its ttl.
+  handleNoticeReaction(newest, { skipSign: newest.presentation === "card" });
   // The bubble held the new cards for the sign; if the sign is not showing
   // this notice after all (another theme, a gate, delivery failed), show them.
   if (getHeldSignNoticeId() !== newest.id) _noticeBubble.revealHeldNotices();
@@ -6635,6 +6661,7 @@ if (!gotTheLock) {
     try { stopUpdateScheduler(); } catch {}
     releasePowerSaveBlocker();
     flushRuntimeStateToPrefs();
+    try { prefsLiveReload.stop(); } catch {}
     globalShortcut.unregisterAll();
     void settingsSizePreviewSession.cleanup();
     permissionAutomationConfirmationRuntime.dispose();

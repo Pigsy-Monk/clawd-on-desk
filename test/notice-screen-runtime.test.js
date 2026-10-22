@@ -304,6 +304,39 @@ describe("notice sign runtime: the held card", () => {
     assert.deepStrictEqual(h.signals, [["interrupted"]]);
   });
 
+  it("gives the card back when another visual commits before the sign was ever reported", () => {
+    const h = createHarness();
+    h.runtime.begin(PAYLOAD, NOTICE, FILE);
+    // The renderer refused the sign and drew its fallback instead: no
+    // active-status ever arrived, so `reported` is null.
+    h.state.committedFile = "clawd-notification.svg";
+    h.runtime.handleVisualCommitted({ file: "clawd-notification.svg" });
+    assert.strictEqual(h.runtime.getPendingId(), null, "a sign that never showed must not stay pending");
+    assert.deepStrictEqual(h.signals, [["interrupted"]], "and its card is released");
+  });
+
+  it("abandons only the sign it was asked about", () => {
+    const h = createHarness();
+    const older = h.runtime.begin(PAYLOAD, NOTICE, FILE);
+    const newer = h.runtime.begin({ ...PAYLOAD, id: "notice-4" }, { ...NOTICE, id: "notice-4" }, FILE);
+    assert.strictEqual(h.runtime.abandon("notice-3", older), false, "a newer sign is in flight");
+    assert.strictEqual(h.runtime.getPendingId(), "notice-4");
+    assert.strictEqual(h.runtime.abandon("notice-4", newer), true);
+    assert.strictEqual(h.runtime.getPendingId(), null);
+    assert.deepStrictEqual(h.signals, [["interrupted"]]);
+  });
+
+  it("begin() answers a token, and a failed sign of the same id cannot abandon a re-push", () => {
+    const h = createHarness();
+    const first = h.runtime.begin(PAYLOAD, NOTICE, FILE);
+    // A keyed re-push reuses the notice id, so the id alone would match.
+    const second = h.runtime.begin(PAYLOAD, NOTICE, FILE);
+    assert.notStrictEqual(first, second);
+    assert.strictEqual(h.runtime.abandon("notice-3", first), false);
+    assert.strictEqual(h.runtime.getPendingId(), "notice-3");
+    assert.strictEqual(h.runtime.abandon("notice-3", second), true);
+  });
+
   it("reports how long the live sign has been up", () => {
     const h = createHarness();
     assert.strictEqual(h.runtime.liveForMs(), 0);

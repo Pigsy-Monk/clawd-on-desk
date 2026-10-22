@@ -460,6 +460,23 @@ describe("cards held back for the notice sign", () => {
     bubble.cleanup();
   });
 
+  it("holds per notice: a card-presented push is shown while a bubble one waits", () => {
+    const asked = [];
+    const ctx = createCtx({
+      shouldHoldNotice: (n) => { asked.push(n.id); return n.presentation !== "card"; },
+    });
+    const bubble = initNoticeBubble(ctx);
+    ctx.noticeStore.push(notice("bubble-1", { presentation: "bubble" }));
+    ctx.noticeStore.push(notice("card-1", { presentation: "card" }));
+    assert.deepEqual(asked, ["bubble-1", "card-1"]);
+    assert.deepEqual(lastShown(bubble.getBubbleWindow()), ["card-1"], "only the card push is on screen");
+    assert.equal(bubble.hasHeldNotices(), true, "the bubble push still waits behind the sign");
+
+    assert.equal(bubble.revealHeldNotices(), 1);
+    assert.deepEqual(lastShown(bubble.getBubbleWindow()), ["bubble-1", "card-1"]);
+    bubble.cleanup();
+  });
+
   it("shows the card when the hold predicate throws", () => {
     const ctx = createCtx({ shouldHoldNewNotices: () => { throw new Error("boom"); } });
     const bubble = initNoticeBubble(ctx);

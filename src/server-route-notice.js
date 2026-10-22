@@ -99,12 +99,17 @@ function handleNoticePost(req, res, options) {
     });
     // `replaced` tells a pusher whether its key refreshed a card that was
     // already up or started a new one — the difference between a heartbeat that
-    // is working and one whose key silently stopped matching.
+    // is working and one whose key silently stopped matching. `ttl` and
+    // `presentation` echo the store's normalized values, so a caller can see
+    // the lifetime it actually got (a level default when it sent no ttl) and
+    // whether it asked for the card.
     res.end(JSON.stringify({
       ok: true,
       id: notice.id,
       count: noticeStore.list().length,
       replaced,
+      ttl: notice.ttl,
+      presentation: notice.presentation,
     }));
   });
 }

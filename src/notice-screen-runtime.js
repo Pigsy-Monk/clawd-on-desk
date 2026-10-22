@@ -82,6 +82,10 @@ function createNoticeScreenRuntime(options = {}) {
   let reported = null;
   let hitWindowActive = false;
   let begunAt = 0;
+  // Every begin() gets a token, so a late settlement can tell whether the sign
+  // it belongs to is still the one in flight — a keyed re-push reuses the
+  // notice id, so the id alone cannot answer that.
+  let beginSeq = 0;
 
   function isPoseLive() {
     return !!(
@@ -101,8 +105,9 @@ function createNoticeScreenRuntime(options = {}) {
   }
 
   function begin(payload, notice, file) {
-    if (!payload || typeof file !== "string" || !file) return false;
+    if (!payload || typeof file !== "string" || !file) return 0;
     pending = Object.freeze({
+      seq: ++beginSeq,
       id: payload.id || null,
       file,
       // Frozen store objects; keep the reference, not a copy of the store.
@@ -111,7 +116,7 @@ function createNoticeScreenRuntime(options = {}) {
     reported = null;
     begunAt = now();
     syncHitWindow();
-    return true;
+    return pending.seq;
   }
 
   function reset() {
@@ -149,22 +154,42 @@ function createNoticeScreenRuntime(options = {}) {
 
   // The displayed-visual projection committed something else: whatever the
   // renderer last said, the head screen is no longer what the hit window sees.
+  // This also covers a sign that never reached the screen at all (the renderer
+  // refused the request and drew a fallback instead): reported is null, but
+  // the pending sign is just as dead, and leaving it set held its card back
+  // forever — a click could not release a card whose sign was never there.
   function handleVisualCommitted(visual) {
     if (!pending) return;
     if (visual && visual.file === pending.file) {
       syncHitWindow();
       return;
     }
-    if (reported) {
-      const id = pending.id;
-      pending = null;
-      reported = null;
-      syncHitWindow();
-      try { onPoseEnded(id, "visual"); } catch {}
-      onPoseInterrupted(id);
-      return;
-    }
+    const id = pending.id;
+    pending = null;
+    reported = null;
     syncHitWindow();
+    try { onPoseEnded(id, "visual"); } catch {}
+    onPoseInterrupted(id);
+  }
+
+  // The sign was asked for but will not be shown (the projection settled it as
+  // failed or superseded). Release the card it was holding back, but only if
+  // this is still the sign in flight — a newer notice may have taken over, and
+  // a keyed re-push reuses the notice id, so `seq` is what decides.
+  function abandon(id, seq) {
+    if (!pending) return false;
+    if (Number.isFinite(seq)) {
+      if (pending.seq !== seq) return false;
+    } else if (id !== null && id !== undefined && pending.id !== id) {
+      return false;
+    }
+    const was = pending.id;
+    pending = null;
+    reported = null;
+    syncHitWindow();
+    try { onPoseEnded(was, "cancel"); } catch {}
+    onPoseInterrupted(was);
+    return true;
   }
 
   // Hit-window client coordinates → screen coordinates → viewBox units.
@@ -259,6 +284,7 @@ function createNoticeScreenRuntime(options = {}) {
   return {
     begin,
     reset,
+    abandon,
     handleRendererStatus,
     handleVisualCommitted,
     handleHitPointer,
