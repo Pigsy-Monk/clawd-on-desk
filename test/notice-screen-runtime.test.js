@@ -217,6 +217,25 @@ describe("notice screen runtime: right-click copy", () => {
 });
 
 describe("notice sign runtime: the held card", () => {
+  it("hands over a held card on a plain click after the sign is down", () => {
+    let calls = 0;
+    const h = createHarness({ onHeldCardClick: () => { calls += 1; return true; } });
+    // No pose up: the click is answered by the held card, not by a poke.
+    assert.strictEqual(h.runtime.handleHitClick(h.fromHit, { clientX: 20, clientY: 30 }), true);
+    assert.strictEqual(calls, 1);
+    // Another window's click never reaches it.
+    assert.strictEqual(h.runtime.handleHitClick(h.fromRender, { clientX: 20, clientY: 30 }), false);
+    assert.strictEqual(calls, 1);
+  });
+
+  it("lets a plain click be a poke when nothing is held", () => {
+    const h = createHarness({ onHeldCardClick: () => false });
+    assert.strictEqual(h.runtime.handleHitClick(h.fromHit, { clientX: 20, clientY: 30 }), false);
+    // A harness without the hook still refuses, as before.
+    const bare = createHarness();
+    assert.strictEqual(bare.runtime.handleHitClick(bare.fromHit, { clientX: 20, clientY: 30 }), false);
+  });
+
   it("asks for the card when a left-click lands on the board", () => {
     const h = createHarness();
     startPose(h);
@@ -234,13 +253,25 @@ describe("notice sign runtime: the held card", () => {
     assert.deepStrictEqual(h.signals, []);
   });
 
-  it("keeps the card held when the sign was shown in full or handed to a newer notice", () => {
+  it("does not call a full showing or a hand-over an interruption", () => {
     for (const reason of ["dwell", "replaced"]) {
       const h = createHarness();
       startPose(h);
       h.runtime.handleRendererStatus(h.fromRender, { active: false, id: "notice-3", reason });
       assert.deepStrictEqual(h.signals, [], reason);
     }
+  });
+
+  it("keeps main from revealing held cards on its own", () => {
+    const fs = require("node:fs");
+    const path = require("node:path");
+    const main = fs.readFileSync(path.join(__dirname, "..", "src", "main.js"), "utf8");
+    const hook = main.match(/onPoseEnded: \(id, reason\) => \{([\s\S]*?)\n  \},/);
+    assert.ok(hook, "main wires onPoseEnded");
+    // The user chose to keep the card behind the sign: it comes out on a click
+    // or when the sign is cut short, never by itself when the sign's time is up.
+    assert.match(hook[1], /if \(stretchOwnsSign\(id\)\) stretchRuntime\.handleSignEnded\(id, reason\);/);
+    assert.doesNotMatch(hook[1], /revealHeldNotices/);
   });
 
   it("gives the card back when the sign is cut short", () => {
@@ -271,6 +302,39 @@ describe("notice sign runtime: the held card", () => {
     h.state.committedFile = "clawd-notification.svg";
     h.runtime.handleVisualCommitted({ file: "clawd-notification.svg" });
     assert.deepStrictEqual(h.signals, [["interrupted"]]);
+  });
+
+  it("gives the card back when another visual commits before the sign was ever reported", () => {
+    const h = createHarness();
+    h.runtime.begin(PAYLOAD, NOTICE, FILE);
+    // The renderer refused the sign and drew its fallback instead: no
+    // active-status ever arrived, so `reported` is null.
+    h.state.committedFile = "clawd-notification.svg";
+    h.runtime.handleVisualCommitted({ file: "clawd-notification.svg" });
+    assert.strictEqual(h.runtime.getPendingId(), null, "a sign that never showed must not stay pending");
+    assert.deepStrictEqual(h.signals, [["interrupted"]], "and its card is released");
+  });
+
+  it("abandons only the sign it was asked about", () => {
+    const h = createHarness();
+    const older = h.runtime.begin(PAYLOAD, NOTICE, FILE);
+    const newer = h.runtime.begin({ ...PAYLOAD, id: "notice-4" }, { ...NOTICE, id: "notice-4" }, FILE);
+    assert.strictEqual(h.runtime.abandon("notice-3", older), false, "a newer sign is in flight");
+    assert.strictEqual(h.runtime.getPendingId(), "notice-4");
+    assert.strictEqual(h.runtime.abandon("notice-4", newer), true);
+    assert.strictEqual(h.runtime.getPendingId(), null);
+    assert.deepStrictEqual(h.signals, [["interrupted"]]);
+  });
+
+  it("begin() answers a token, and a failed sign of the same id cannot abandon a re-push", () => {
+    const h = createHarness();
+    const first = h.runtime.begin(PAYLOAD, NOTICE, FILE);
+    // A keyed re-push reuses the notice id, so the id alone would match.
+    const second = h.runtime.begin(PAYLOAD, NOTICE, FILE);
+    assert.notStrictEqual(first, second);
+    assert.strictEqual(h.runtime.abandon("notice-3", first), false);
+    assert.strictEqual(h.runtime.getPendingId(), "notice-3");
+    assert.strictEqual(h.runtime.abandon("notice-3", second), true);
   });
 
   it("reports how long the live sign has been up", () => {

@@ -216,9 +216,11 @@ document.addEventListener("pointerup", (e) => {
     return;
   }
 
-  // While the notice sign is up, a click on the board opens the notice's
-  // card instead of counting as a poke; main knows where the board is.
-  if (noticeScreenActive && typeof window.hitAPI.noticeScreenClick === "function") {
+  // A click may belong to the notice sign: on the board it opens the notice's
+  // card, and with the sign already down main may still be holding a card
+  // behind it. Main answers true when it took the click; otherwise the click
+  // is an ordinary poke.
+  if (typeof window.hitAPI.noticeScreenClick === "function") {
     const clientX = e.clientX;
     window.hitAPI.noticeScreenClick({ clientX, clientY: e.clientY }).then((handled) => {
       if (!handled) handleClick(clientX);
@@ -250,6 +252,19 @@ let firstClickDir = null;
 
 function _getReaction(name) {
   return _reactions[name] || null;
+}
+
+// A reaction binds either a single `file` or a pool of `files` it draws from at
+// random — the shape `double` has always used. Click reactions use the same
+// rule, so a theme can declare a group of click lines ("say one of these when
+// the pet is poked") by listing them in clickLeft.files / clickRight.files.
+function _pickReactionFile(react) {
+  if (!react) return null;
+  const files = Array.isArray(react.files)
+    ? react.files.filter((file) => typeof file === "string" && file)
+    : [];
+  if (files.length > 0) return files[Math.floor(Math.random() * files.length)];
+  return typeof react.file === "string" && react.file ? react.file : null;
 }
 
 function resetClickAccumulator() {
@@ -293,9 +308,7 @@ function handleClick(clientX) {
     clickCount = 0;
     firstClickDir = null;
     if (!canPlayReactionNow()) return;
-    const files = doubleReact.files || [doubleReact.file];
-    const file = files[Math.floor(Math.random() * files.length)];
-    playReaction(file, doubleReact.duration || 3500);
+    playReaction(_pickReactionFile(doubleReact), doubleReact.duration || 3500);
   } else if (clickCount >= 2) {
     clickTimer = setTimeout(() => {
       clickTimer = null;
@@ -304,10 +317,10 @@ function handleClick(clientX) {
       firstClickDir = null;
       if (!canPlayReactionNow()) return;
       if (annoyedReact && Math.random() < 0.5) {
-        playReaction(annoyedReact.file, annoyedReact.duration || 3500);
+        playReaction(_pickReactionFile(annoyedReact), annoyedReact.duration || 3500);
       } else if (leftReact && rightReact) {
         const react = dir === "left" ? leftReact : rightReact;
-        playReaction(react.file, react.duration || 2500);
+        playReaction(_pickReactionFile(react), react.duration || 2500);
       }
     }, CLICK_WINDOW_MS);
   } else {
@@ -395,14 +408,13 @@ if (!isMac) {
     if (!canPlayReactionNow()) return;
     const doubleReact = _getReaction("double");
     if (doubleReact) {
-      const files = doubleReact.files || [doubleReact.file];
-      playReaction(files[Math.floor(Math.random() * files.length)], doubleReact.duration || 3500);
+      playReaction(_pickReactionFile(doubleReact), doubleReact.duration || 3500);
       return;
     }
     const left = _getReaction("clickLeft");
     const right = _getReaction("clickRight");
     const poke = left && right ? (Math.random() < 0.5 ? left : right) : (left || right);
-    if (poke) playReaction(poke.file, poke.duration || 2500);
+    if (poke) playReaction(_pickReactionFile(poke), poke.duration || 2500);
   });
 }
 

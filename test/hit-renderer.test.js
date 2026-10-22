@@ -541,3 +541,128 @@ describe("hit-renderer notice head screen", () => {
     ]);
   });
 });
+
+// Click reactions may declare a pool of files (`files`) instead of one fixed
+// `file`, exactly like the 4-click `double` reaction always could. That is how a
+// theme says "poke the pet and it says one of these lines".
+describe("hit-renderer click line pools", () => {
+  const LINES = { reactions: {
+    clickLeft: { files: ["say-a.svg", "say-b.svg", "say-c.svg"], duration: 3000 },
+    clickRight: { files: ["say-d.svg", "say-e.svg"], duration: 3000 },
+  } };
+
+  // The sandbox global's intrinsics are not own properties of the context
+  // object, so the stub has to be installed from inside the context.
+  function stubRandom(h, value) {
+    vm.runInContext(`Math.random = () => ${value};`, h.context);
+  }
+
+  function playOf(h) {
+    const plays = h.apiCalls.filter((c) => c[0] === "playClickReaction");
+    assert.strictEqual(plays.length, 1, `expected exactly one reaction, got ${JSON.stringify(plays)}`);
+    return plays[0];
+  }
+
+  // One click resolves to clickLeft / clickRight after the 400ms accumulator.
+  function clickAt(h, clientX) {
+    h.pointerup({ clientX });
+    h.pointerup({ clientX });
+    assert.ok(h.fireTimer((t) => t.ms === 400), "the click accumulator timer must be pending");
+  }
+
+  it("plays a line from the left pool for a click on the left half", () => {
+    const h = createHarness();
+    h.apiHandlers.themeConfig(LINES);
+    stubRandom(h, 0.5);
+    clickAt(h, 10);
+    assert.deepStrictEqual(playOf(h), ["playClickReaction", "say-b.svg", 3000]);
+  });
+
+  it("plays a line from the right pool for a click on the right half", () => {
+    const h = createHarness();
+    h.apiHandlers.themeConfig(LINES);
+    stubRandom(h, 0.999);
+    clickAt(h, 190);
+    assert.deepStrictEqual(playOf(h), ["playClickReaction", "say-e.svg", 3000]);
+  });
+
+  it("varies which line comes out of the pool", () => {
+    const seen = new Set();
+    for (const roll of [0, 0.4, 0.99]) {
+      const h = createHarness();
+      h.apiHandlers.themeConfig(LINES);
+      stubRandom(h, roll);
+      clickAt(h, 10);
+      seen.add(playOf(h)[1]);
+    }
+    assert.deepStrictEqual([...seen].sort(), ["say-a.svg", "say-b.svg", "say-c.svg"]);
+  });
+
+  it("still plays the fixed file for a theme that declares only `file`", () => {
+    const h = createHarness();
+    h.apiHandlers.themeConfig({ reactions: {
+      clickLeft: { file: "left.svg", duration: 2500 },
+      clickRight: { file: "right.svg", duration: 2500 },
+    } });
+    stubRandom(h, 0.5);
+    clickAt(h, 10);
+    assert.deepStrictEqual(playOf(h), ["playClickReaction", "left.svg", 2500]);
+  });
+
+  it("prefers the pool when both `file` and `files` are declared", () => {
+    const h = createHarness();
+    h.apiHandlers.themeConfig({ reactions: {
+      clickLeft: { file: "legacy.svg", files: ["pool.svg"], duration: 2500 },
+      clickRight: { file: "right.svg", duration: 2500 },
+    } });
+    stubRandom(h, 0);
+    clickAt(h, 10);
+    assert.deepStrictEqual(playOf(h), ["playClickReaction", "pool.svg", 2500]);
+  });
+
+  it("falls back to `file` when the pool is empty or malformed", () => {
+    const h = createHarness();
+    h.apiHandlers.themeConfig({ reactions: {
+      clickLeft: { file: "left.svg", files: [], duration: 2500 },
+      clickRight: { file: "right.svg", files: [null, 7], duration: 2500 },
+    } });
+    stubRandom(h, 0);
+    clickAt(h, 10);
+    assert.deepStrictEqual(playOf(h), ["playClickReaction", "left.svg", 2500]);
+  });
+
+  it("plays nothing when the reaction declares neither file nor a usable pool", () => {
+    const h = createHarness();
+    h.apiHandlers.themeConfig({ reactions: {
+      clickLeft: { files: [null], duration: 2500 },
+      clickRight: { files: [], duration: 2500 },
+    } });
+    stubRandom(h, 0);
+    clickAt(h, 10);
+    assert.deepStrictEqual(h.apiCalls.filter((c) => c[0] === "playClickReaction"), []);
+  });
+
+  it("keeps the 4-click double reaction drawing from its pool", () => {
+    const h = createHarness();
+    h.apiHandlers.themeConfig({ reactions: {
+      double: { files: ["flail-a.svg", "flail-b.svg"], duration: 3500 },
+    } });
+    stubRandom(h, 0.75);
+    h.pointerup({ clientX: 10 });
+    h.pointerup({ clientX: 10 });
+    h.pointerup({ clientX: 10 });
+    h.pointerup({ clientX: 10 });
+    assert.deepStrictEqual(playOf(h), ["playClickReaction", "flail-b.svg", 3500]);
+  });
+
+  it("draws a drop reaction from the click pool when there is no double", () => {
+    const h = createHarness();
+    h.apiHandlers.themeConfig({ reactions: {
+      clickLeft: { files: ["say-a.svg", "say-b.svg"], duration: 3000 },
+      clickRight: { files: ["say-c.svg"], duration: 3000 },
+    } });
+    stubRandom(h, 0.99);
+    h.apiHandlers.dropAccepted();
+    assert.deepStrictEqual(playOf(h), ["playClickReaction", "say-c.svg", 3000]);
+  });
+});

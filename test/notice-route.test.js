@@ -71,6 +71,22 @@ describe("POST /notice", () => {
     assert.strictEqual(landed[0].level, "success");
   });
 
+  it("echoes the effective ttl and presentation so the caller can check them", async () => {
+    const store = createNoticeStore({ max: 5 });
+    const card = await callNoticePost(
+      JSON.stringify({ title: "monitor", level: "warn", ttl: 300000, presentation: "card" }),
+      { noticeStore: store }
+    );
+    const cardBody = JSON.parse(card.body);
+    assert.strictEqual(cardBody.ttl, 300000, "the caller's ttl is the one in effect");
+    assert.strictEqual(cardBody.presentation, "card");
+
+    const plain = await callNoticePost(JSON.stringify({ title: "hi", level: "error" }), { noticeStore: store });
+    const plainBody = JSON.parse(plain.body);
+    assert.strictEqual(plainBody.ttl, 300_000, "no ttl falls back to the level default");
+    assert.strictEqual(plainBody.presentation, "bubble", "and no presentation is the pet's own");
+  });
+
   it("reports a keyed push that refreshed a live notice instead of creating one", async () => {
     const store = createNoticeStore({ max: 5 });
     const first = await callNoticePost(

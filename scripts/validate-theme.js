@@ -367,6 +367,73 @@ if (raw.eyeTracking && raw.eyeTracking.enabled && assetsDirExists) {
   const optionalIds = [ids.body, ids.shadow].filter(Boolean);
   const trackingLayers = isPlainObject(raw.eyeTracking.trackingLayers) ? raw.eyeTracking.trackingLayers : null;
 
+  // Aim layers (mode "rotate" / "foreshorten") turn about a viewBox point, so
+  // the point has to be inside the art that is actually drawn for this file.
+  const fileViewBoxes = isPlainObject(raw.fileViewBoxes) ? raw.fileViewBoxes : {};
+  const miniViewBox = isPlainObject(raw.miniMode) && isPlainObject(raw.miniMode.viewBox)
+    ? raw.miniMode.viewBox
+    : null;
+  const effectiveViewBox = (file) => {
+    if (isPlainObject(fileViewBoxes[file])) return fileViewBoxes[file];
+    if (typeof file === "string" && file.startsWith("mini-") && miniViewBox) return miniViewBox;
+    return vb;
+  };
+  const insideViewBox = (viewBox, point) => !!viewBox
+    && point[0] >= viewBox.x && point[0] <= viewBox.x + viewBox.width
+    && point[1] >= viewBox.y && point[1] <= viewBox.y + viewBox.height;
+  const isPointPair = (value) => Array.isArray(value) && value.length === 2
+    && value.every((n) => typeof n === "number" && Number.isFinite(n));
+
+  function reportAimLayers(file, content, layers) {
+    const viewBox = effectiveViewBox(file);
+    for (const [layerName, layerCfg] of Object.entries(layers)) {
+      if (!isPlainObject(layerCfg)) continue;
+      const mode = layerCfg.mode;
+      if (mode !== "rotate" && mode !== "foreshorten") continue;
+      const pathName = `trackingLayers.${layerName}`;
+
+      const layerIds = Array.isArray(layerCfg.ids) ? layerCfg.ids : [];
+      const layerClasses = Array.isArray(layerCfg.classes) ? layerCfg.classes : [];
+      const matched = layerIds.some((id) => content.includes(`id="${id}"`))
+        || layerClasses.some((className) => svgHasClass(content, className));
+      check(matched, `${file}: ${pathName} (mode "${mode}") targets an element that exists in this SVG`);
+
+      if (!isPointPair(layerCfg.pivot)) {
+        check(false, `${file}: ${pathName}.pivot must be an [x, y] pair (mode "${mode}")`);
+      } else {
+        check(
+          insideViewBox(viewBox, layerCfg.pivot),
+          `${file}: ${pathName}.pivot [${layerCfg.pivot.join(", ")}] is inside the viewBox `
+            + `[${viewBox ? [viewBox.x, viewBox.y, viewBox.width, viewBox.height].join(", ") : "?"}]`
+        );
+      }
+
+      if (layerCfg.aimOrigin !== undefined) {
+        if (!isPointPair(layerCfg.aimOrigin)) {
+          check(false, `${file}: ${pathName}.aimOrigin must be an [x, y] pair when present`);
+        } else if (!insideViewBox(viewBox, layerCfg.aimOrigin)) {
+          warn(false, `${file}: ${pathName}.aimOrigin [${layerCfg.aimOrigin.join(", ")}] is outside the viewBox`);
+        }
+      }
+
+      if (mode === "rotate") {
+        if (typeof layerCfg.minAngle !== "number" || typeof layerCfg.maxAngle !== "number") {
+          check(false, `${file}: ${pathName}.minAngle / maxAngle must be numbers (mode "rotate")`);
+        } else {
+          check(
+            layerCfg.minAngle <= 0 && layerCfg.maxAngle >= 0,
+            `${file}: ${pathName} minAngle (${layerCfg.minAngle}) <= 0 <= maxAngle (${layerCfg.maxAngle})`
+          );
+        }
+      } else {
+        check(
+          typeof layerCfg.maxAngle === "number" && layerCfg.maxAngle > 0,
+          `${file}: ${pathName}.maxAngle must be > 0 (mode "foreshorten")`
+        );
+      }
+    }
+  }
+
   // Check each eye tracking SVG
   const eyeStates = raw.eyeTracking.states || [];
   for (const stateName of eyeStates) {
@@ -402,6 +469,7 @@ if (raw.eyeTracking && raw.eyeTracking.enabled && assetsDirExists) {
             if (layerMatched) matchedAnyLayer = true;
           }
           check(matchedAnyLayer, `${file}: trackingLayers matched at least one configured element/class`);
+          reportAimLayers(file, content, trackingLayers);
         } else {
           // Eyes ID is required for legacy eye tracking to work
           const hasEyes = content.includes(`id="${eyesId}"`);

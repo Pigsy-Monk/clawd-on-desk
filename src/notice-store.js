@@ -46,6 +46,14 @@ const LEVELS = Object.freeze(["info", "success", "warn", "error"]);
 const LEVEL_SET = new Set(LEVELS);
 const DEFAULT_LEVEL = "info";
 
+// How a push wants to be shown. `bubble` is the pet's own way: it holds the
+// notice up on its sign and keeps the card back until the board is clicked
+// (src/main.js shouldHoldNotice). `card` asks for the card itself, at once —
+// no sign, no click, visible for the notice's ttl — which is what a monitoring
+// pusher that cannot rely on the user noticing a 4-second sign needs.
+const PRESENTATIONS = Object.freeze(["bubble", "card"]);
+const DEFAULT_PRESENTATION = "bubble";
+
 const DEFAULT_KIND = "text";
 const TREND_KIND = "trend";
 // A card with a little figure acting something out (`pose`, see
@@ -135,6 +143,14 @@ function normalizeTtl(value, level) {
     return LEVEL_TTL_MS[level] || DEFAULT_TTL_MS;
   }
   return Math.min(MAX_TTL_MS, Math.max(MIN_TTL_MS, Math.round(ttl)));
+}
+
+// Only the exact string "card" asks for the card straight away; everything
+// else — absent, "bubble", a misspelling, a different casing — is the pet's
+// own presentation. Guessing at near-misses would mean a typo silently changes
+// how loud a card is.
+function normalizePresentation(value) {
+  return value === "card" ? "card" : DEFAULT_PRESENTATION;
 }
 
 // Only the exact string "trend" makes a chart card; everything else — absent,
@@ -295,6 +311,7 @@ function createNoticeStore(options = {}) {
 
     const level = normalizeLevel(raw.level);
     const ttl = normalizeTtl(raw.ttl, level);
+    const presentation = normalizePresentation(raw.presentation);
     const at = now();
     // Everything a replace takes wholesale from the new push. The two identity
     // fields are not in here: they are what the replace preserves.
@@ -304,6 +321,7 @@ function createNoticeStore(options = {}) {
       body,
       level,
       kind,
+      presentation,
       series: Object.freeze(series),
       image,
       pose,
@@ -463,6 +481,8 @@ module.exports = {
   LEVELS,
   DEFAULT_LEVEL,
   LEVEL_TTL_MS,
+  PRESENTATIONS,
+  DEFAULT_PRESENTATION,
   DEFAULT_KIND,
   TREND_KIND,
   POSE_KIND,
@@ -477,6 +497,7 @@ module.exports = {
     normalizeKey,
     normalizeLevel,
     normalizeTtl,
+    normalizePresentation,
     normalizeKind,
     normalizePoints,
     normalizeSeriesEntry,

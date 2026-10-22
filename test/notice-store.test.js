@@ -747,3 +747,33 @@ describe("notice store — expiry paused during a stretch break", () => {
     assert.strictEqual(store.isExpiryPaused(), false);
   });
 });
+
+describe("notice store — presentation", () => {
+  it("defaults to the pet's bubble", () => {
+    const store = makeStore();
+    const { notice } = store.add({ title: "hello" });
+    assert.strictEqual(notice.presentation, "bubble");
+  });
+
+  it("keeps an explicit card presentation", () => {
+    const store = makeStore();
+    const { notice } = store.add({ title: "hello", presentation: "card" });
+    assert.strictEqual(notice.presentation, "card");
+  });
+
+  it("treats anything but the exact card string as the bubble", () => {
+    const store = makeStore();
+    for (const value of ["Card", "big", "", 1, null, undefined]) {
+      const { notice } = store.add({ title: `t-${String(value)}`, presentation: value });
+      assert.strictEqual(notice.presentation, "bubble", `presentation=${String(value)}`);
+    }
+  });
+
+  it("a keyed replace takes the new presentation", () => {
+    const store = makeStore();
+    store.add({ key: "k", title: "one", presentation: "card" });
+    const { notice, replaced } = store.add({ key: "k", title: "two", presentation: "bubble" });
+    assert.strictEqual(replaced, true);
+    assert.strictEqual(notice.presentation, "bubble");
+  });
+});

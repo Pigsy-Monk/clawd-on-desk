@@ -70,6 +70,32 @@ Clawd 是主题化桌宠：动画资源、计时、hitbox、眼球追踪参数�
 
 主题创建流程见 `docs/guides/guide-theme-creation.md`。
 
+### Aim Tracking（炮管跟随）
+
+`eyeTracking.trackingLayers` 的图层默认只做平移；加 `mode` 后可以跟随光标**转动**，用来做「炮塔/炮管指着鼠标」。字段表：
+
+| 字段 | 取值 | 作用 |
+|---|---|---|
+| `mode` | `"translate"`（默认）/ `"rotate"` / `"foreshorten"` | 图层怎么跟随。不写就是 `translate`，老主题行为完全不变 |
+| `ids` / `classes` | 字符串数组 | 要控制的目标元素（两个 aim 模式同样用它选元素） |
+| `ease` | 0~1，每帧插值系数 | 和 translate 层同义，默认 0.15 |
+| `pivot` | `[x, y]`，viewBox 单位 | `rotate` 的转轴 / `foreshorten` 的缩放基点；aim 模式下必填 |
+| `aimOrigin` | `[x, y]`，viewBox 单位，默认 = `pivot` | 从这一点朝光标连线算角度。转轴在座圈、瞄准点在炮管根部时两者不同 |
+| `restAngle` | 度，屏幕坐标（负 = 朝上），默认 0 | 美术里炮管本来指的方向（dahu 是 −14） |
+| `minAngle` / `maxAngle` | 度，相对 `restAngle`，SVG `rotate()` 正负号 | `rotate` 的转动上下限，必填，且必须 `minAngle <= 0 <= maxAngle`（静止角始终可达） |
+| `maxAngle`（`foreshorten`） | 度，必须 > 0 | 偏航幅度：身后 80 viewBox 单位处到满值 |
+| `rampPx` | px，默认 160，0 = 关闭 | 光标离 `aimOrigin` 多近时按比例收回到 `restAngle`，避免光标贴着宠物时乱转 |
+| `behind` | `"mirror"`（默认）/ `"clamp"` | 只给 `rotate`：光标在宠物身后（左边）时，镜像成同样的仰角，还是让原始角度贴到上下限 |
+| `when` | `"behind"`（默认，目前唯一取值） | 只给 `foreshorten`：什么时候缩短 |
+
+- **`rotate`**：绕 `pivot` 转 `clamp(方向角 − restAngle, minAngle, maxAngle) × ramp` 度。方向角是光标相对 `aimOrigin` 的 `atan2`；`behind: "mirror"` 把身后的光标折到同一仰角，`"clamp"` 让原始角度撞上下限。写 `rotate(a px py)`。
+- **`foreshorten`**：光标在身后时沿图层自身 x 轴按 `cos(yaw)` 缩短，侧视图里用它暗示「朝镜头转过来」。它不旋转，写 `translate(px py) scale(k 1) translate(-px -py)`，所以目标元素要套在旋转层里（炮管自己的 x 轴就是炮管轴向）。
+- **数据来源**：tick.js 随 `eye-move` 多发一份**未裁剪**的光标样本（光标相对素材矩形的坐标 + 矩形尺寸，device px）。眼球位移被 `maxOffset` 夹住且量化过，算角度不准。没有样本时（状态切换、鼠标静止、老版本 main）两个模式都缓动回静止位——这就是 `eye-move(0, 0)` 的归零语义。
+- **镜像**：宠物被画成镜像时（mini 贴左边缘、朝左漫游）角度要反号，判据与素材朝向共用 `src/pet-accessory-mirror.js`（`miniLeftFlip !== shouldApplyMiniAssetFlip(state)`）。翻转本身不重发样本，所以宠物翻转后要等下一次光标移动才更新，和 translate 层一致。
+- **兼容**：没有 `mode` 的图层（clawd、calico 等全部现有主题）继续走原来的 translate 路径；主题没有 aim 图层时连样本都不发，`eye-move` 的 IPC 形状和以前完全一样。
+- 校验：`src/theme-schema.js` 检查模式、字段归属、类型与范围（非法值报错，主题会回退到 clawd）；`scripts/validate-theme.js` 另外检查 aim 层的目标元素在该 SVG 里存在、`pivot` 落在有效 viewBox 内（`aimOrigin` 出界只告警）。
+- 数学在 `src/aim-tracking.js`（纯函数，浏览器与 Node 共用），渲染接线在 `src/renderer.js` 的 `_initLayeredTracking` / `_startLayerAnimLoop`。
+
 ### Displayed visual settlement
 
 main 中的 displayed-visual projection 是文件、hitbox 和视觉来源的唯一权威。renderer 对每个仍有效的 request 恰好返回一个终结结果：正常加载为 `swapped`，当前文件已经显示为 `already-displayed`，实际显示了可投影的替代文件为 `fallback`，无法验证则为 `failed`；被后续请求取代的 generation 由 main 标为 `superseded`，renderer 不伪造 ACK。
@@ -205,6 +231,7 @@ Settings 是独立 `BrowserWindow`，采用 5 层结构：
 - 醒着悬停立即切 `mini-peek`；其 autoReturn 到时若鼠标仍在，有 `mini-peek-hold` 则循环保持，否则回 `mini-idle`，两者均以 `miniPeeked` 防止重复探身。睡着悬停有 `mini-sleep-peek` 才切图；没有时只滑窗口。离开分别回 `mini-idle` / `mini-sleep`，关闭 DND 会让睡眠探身滑回并回 `mini-idle`
 - `miniMode.peek` 可选设置 `offsetRatio`（按当前窗口宽取整，默认固定 25px）、`delayMs`（默认 0）和 `durationMs`（默认 200，滑出滑回共用）；`miniMode.sleepPeek` 逐字段继承 `peek`，再回默认。缓动仍为 `t·(2−t)`。延迟期间离开、退出 mini、主题刷新、拖拽、菜单、mini 过渡或显示器变化会取消待执行滑动；滑动仍通过 mini 的窗口保护与 `finalizeMiniProtectionExit` 收尾。点击横向加宽读取实际滑动距离
 - `savePrefs()` 会持久化 `miniMode/preMiniX/preMiniY`
+- **贴边时来通知**（`src/mini-notice-popout.js`）：贴边时没地方举牌，所以主题有 `notice-screen` 举牌时，宠物先 `exitMiniMode()` 跳出来（落点是 `preMiniX/Y` 经防回吸修正后的位置），落地停 200 ms 再按普通流程举牌（卡片照样先 held）；牌子放下且卡片窗口不可见后，以原来那条边 `enterMiniMode(wa, false, edge)` 贴回。点开的卡片最多等 60 秒。途中用户拖走宠物（偏移 > 6px）、自己贴边、关掉 mini 都不再贴回；跳出过程中来的新通知接手同一次跳出；跳不出来（4 秒超时）或牌子投递失败时直接弹卡片。gate 见 `canPlayMiniNoticeSign`（`src/notice-reaction.js`）：与举牌同一套，只是要求 mini 而不是排除 mini，过渡中仍等待。主题没有举牌时贴边行为不变（不反应、只弹卡片）
 
 Mini 状态映射：
 
@@ -320,6 +347,7 @@ Mini 状态映射：
 - 4 连击 → 双手拍反应
 - 拖拽 → 持续拖拽反应
 - 反应动画期间会暂时 detach 眼球追踪
+- **点击台词池**：`reactions.clickLeft` / `clickRight` 除了 `file` 还可以写 `files: [...]`，单击结算到左/右时从池里随机挑一个播（4 连击的 `double` 一直是这个规则）。`files` 非空时优先于 `file`；池里没有可用文件时回退 `file`，两者都没有就什么都不播。台词气泡画在主题 SVG 自己的 viewBox 预留区里（白底圆角气泡 + 小尾巴，系统字体），引擎只负责挑文件和计时，`duration` 是气泡停留时长
 
 ### Test Result Reactions
 
@@ -331,7 +359,8 @@ Mini 状态映射：
 ### Notice Reactions
 
 - `POST /notice` 进 `src/notice-store.js` 后，main 每个 snapshot 只对最新一条反应一次；gate 在 `src/notice-reaction.js`（`noticeReactionsEnabled`、DND、隐藏、mini / mini transition、拖拽、headless、无窗口），渲染侧只收 `{ level, id, title }`（title 是单行 headline，不含 body / series / image）
-- 主题声明 `reactions["notice-screen"]`（目前只有 Clawd 的 `clawd-notice-screen.svg`，文件名沿用旧称）时走“举小黑板”姿势：宠物用杆子举一块小黑板，提示符按 level 着色、标题用粉笔字（打包的 ZCOOL KuaiLe）写在黑板上；每 4.5 秒把牌子从头顶抛到另一只手（`#notice-sign-car` 整体平移 `LEFT_HAND_DX`）。main 用 `requestDisplayedVisual(..., { source: "reaction" })` 走 visual-generation 合同，使 `fileHitBoxes` 覆盖身体 + 两只手各自放大后的黑板包络；其他主题保持按 level 的 `react-annoyed` / `heart-eyes` / `notification` / `idle-look`
+- 主题声明 `reactions["notice-screen"]`（Clawd 的 `clawd-notice-screen.svg`，文件名沿用旧称；Calico 的 `calico-notice-screen.svg`）时走“举牌”姿势。Clawd 是“举小黑板”：宠物用杆子举一块小黑板，提示符按 level 着色、标题用粉笔字（打包的 ZCOOL KuaiLe）写在黑板上；每 4.5 秒把牌子从头顶抛到另一只手（`#notice-sign-car` 整体平移 `LEFT_HAND_DX`）。main 用 `requestDisplayedVisual(..., { source: "reaction" })` 走 visual-generation 合同，使 `fileHitBoxes` 覆盖身体 + 两只手各自放大后的黑板包络；其他主题保持按 level 的 `react-annoyed` / `heart-eyes` / `notification` / `idle-look`
+- **主题自己的牌子**：`reactions["notice-screen"].sign` 声明牌子的 `screen`（牌子矩形，viewBox 单位，悬停从它放大、点击按它判定）、`line`（`startX` / `endX` / `baselineY` / `titleFontSize`，可选 `promptFontSize`、`promptGap`、`align: "center"`——放得下居中，放不下从左滚动）、`titleColor` / `feedbackColor`（只收 hex）和 `levels.<level>.{color, glyph}`（glyph ≤ 4 字符，只来自主题，绝不来自通知）。`screen` 和 `line` 必须一起合法，否则整体回落 Clawd 的黑板几何，`theme-schema` 校验会直接报错。跑马灯速度按标题字号换算（每个字的滚动时间相同）。SVG 里有 `#notice-level-glyph` 时级别写进这个徽章、标题行不再带提示符；没有 `#notice-sign-car` / 手臂 / 手的牌子不换手、原地不动。Calico 的牌子是猫耳气泡：气泡里的猫与 `calico-idle-follow.svg` 是同一套路径、同一 `fileScales` / `fileOffsets`，切到气泡时猫不跳；`fileViewBoxes` 把画布扩到整个宠物窗口，好放下头顶的气泡和它放大后的范围；`test/calico-notice-screen-asset.test.js` 校验素材惰性和几何一致
 - 黑板素材在 `rendering.objectChannelFiles` 里，renderer 用 DOM API 往 SVG 文档写 prompt 和标题；字体经 `fetch` + 该文档自己的 `FontFace` 载入，失败回落系统字体。长标题三遍跑马灯，停留时长按三遍计算并钳到 [3 s, 15 s]（放得下的固定 4 s）；几何、计时与抛牌轨迹都在 `src/notice-screen-layout.js`
 - **卡片默认先不弹**（与用户确认的“只举牌”做法）：新通知到达时若这块牌子会显示它（`handleNoticeReaction.canPlay()` 且主题有该 reaction），`src/notice-bubble.js` 把新卡片记入 held 集合不渲染；左键点黑板（`notice-screen-hit-click` invoke → `noticeScreenRuntime.handleHitClick`）才 `revealHeldNotices()`。姿势以 `reason` 结束：`dwell`（放完）和 `replaced`（被更新的通知接手）保持 held，未点开的通知只能去仪表盘通知历史里看；其他结束（状态切换、拖拽、DND、mini、其他视觉提交、换主题）视为被打断，立即弹出卡片。牌子没接住这条通知（其他主题、gate 关闭、投递失败）时 main 的 reaction 订阅也会立即 reveal，卡片不会丢
 - 举牌期间普通状态视觉（`source` 非 `reaction`、非 `notification`、非 DND / mini）在 main 的 `requestDisplayedVisual` 被推迟：姿势结束时 renderer 的 `resume-from-reaction` 会取回当前状态，所以会话回合结束等普通状态切换不再把牌子顶掉；权限请求（`notification`）、拖拽 / 点击反应、DND、mini 照常立即打断；姿势超过 120 秒不再推迟（防 renderer 卡死）

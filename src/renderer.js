@@ -637,9 +637,11 @@ function applyMiniFlip(el, state = currentState) {
 let _useLayeredTracking = false;
 let _trackingLayersConfig = null;  // raw config from theme.json
 let _themeMaxOffset = 20;          // theme-level maxOffset for normalization
-let _trackingLayers = null;        // { name: { wrappers: [], maxOffset, ease, x, y } }
+let _trackingLayers = null;        // { name: { wrappers: [], maxOffset, ease, x, y, aim } }
 let _layerTargetDx = 0;           // raw dx from tick.js (scaled to _themeMaxOffset)
 let _layerTargetDy = 0;           // raw dy from tick.js
+let _aimSample = null;            // raw cursor sample from tick.js: { x, y, w, h } in device px
+let _aimViewBox = null;           // effective viewBox of the tracked SVG (for the px-per-unit scale)
 let _layerAnimFrame = null;        // requestAnimationFrame handle
 let _layeredTrackingObj = null;    // the <object> element currently tracked (guard against re-init)
 let _layeredTrackingDocument = null;
@@ -1319,7 +1321,10 @@ if (window.electronAPI && typeof window.electronAPI.onPlayNoticeReaction === "fu
 // tosses while the line keeps scrolling so it can be read; the wheel adjusts
 // the zoom. A left-click on the board opens the notice's card (main holds the
 // card back while the sign is up); a right-click copies the notice (main
-// writes the clipboard and tells us to flash a confirmation). All
+// writes the clipboard and tells us to flash a confirmation). Another theme
+// can bring its own board (`reactions["notice-screen"].sign`): its rect, text
+// line and colours replace clawd's, a #notice-level-glyph badge replaces the
+// prompt, and a board without hands to pass it between simply stays put. All
 // geometry/timing math is in notice-screen-layout.js; this section only
 // drives the SVG document.
 const noticeLayout = globalThis.noticeScreenLayout || null;
@@ -1333,7 +1338,6 @@ const NOTICE_SCREEN_FONTS = Object.freeze([
   Object.freeze({ family: "Clawd Notice Chalk", file: "fonts/zcool-kuaile.woff2" }),
 ]);
 const NOTICE_CHALK_FONT_STACK = "'Clawd Notice Chalk', 'Microsoft YaHei', 'PingFang SC', sans-serif";
-const NOTICE_TITLE_COLOR = "#F2F2E6";
 const NOTICE_FONT_WAIT_MS = 400;
 // After the pointer leaves the board the next toss waits at least this long.
 const NOTICE_TOSS_AFTER_HOVER_MS = 1500;
@@ -1348,9 +1352,14 @@ function prefersReducedMotion() {
   }
 }
 
-function resolveNoticeScreenFile() {
+function getNoticeScreenEntry() {
   const entry = tc && tc.reactions && tc.reactions[NOTICE_SCREEN_REACTION];
-  if (!entry || typeof entry !== "object") return null;
+  return entry && typeof entry === "object" ? entry : null;
+}
+
+function resolveNoticeScreenFile() {
+  const entry = getNoticeScreenEntry();
+  if (!entry) return null;
   const file = Array.isArray(entry.files) ? entry.files[0] : entry.file;
   return typeof file === "string" && file ? file : null;
 }
@@ -1359,9 +1368,14 @@ function playNoticeScreen(payload, visualRequest) {
   if (!noticeLayout) return false;
   const file = resolveNoticeScreenFile();
   if (!file || file !== visualRequest.file) return false;
+  // The board the theme draws (clawd's chalkboard unless the reaction
+  // declares its own `sign`): every rect, line position and colour below.
+  const entry = getNoticeScreenEntry();
+  const sign = noticeLayout.resolveSign(entry && entry.sign);
   const pose = {
     id: typeof payload.id === "string" ? payload.id : null,
-    level: noticeLayout.resolveLevel(payload.level),
+    sign,
+    level: noticeLayout.resolveLevel(payload.level, sign),
     title: typeof payload.title === "string" ? payload.title : "",
     file,
     reducedMotion: prefersReducedMotion(),
@@ -1377,7 +1391,7 @@ function playNoticeScreen(payload, visualRequest) {
       ? Math.min(120000, payload.dwellMs)
       : null,
     dwellTimer: null,
-    plan: noticeLayout.buildMarqueePlan(0),
+    plan: noticeLayout.buildMarqueePlan(0, sign),
     offset: 0,
     marqueeStartedAt: Date.now(),
     // Once hovered, the passes keep coming until the pose ends.
@@ -1390,6 +1404,9 @@ function playNoticeScreen(payload, visualRequest) {
     promptEl: null,
     titleEl: null,
     feedbackEl: null,
+    // A board with a level badge (#notice-level-glyph) shows the level there
+    // instead of as a prompt at the start of the line.
+    glyphEl: null,
     // Which hand holds the sign, and the parts a toss moves or swaps.
     side: "right",
     carrierEl: null,
@@ -1406,8 +1423,8 @@ function playNoticeScreen(payload, visualRequest) {
     leaveTimer: null,
     wheelScale: noticeLayout.HOVER_ZOOM_SCALE,
     wheelCarry: 0,
-    zoomTarget: noticeLayout.computeZoomRect(noticeLayout.SCREEN_RECT, 1, null),
-    zoomCurrent: noticeLayout.computeZoomRect(noticeLayout.SCREEN_RECT, 1, null),
+    zoomTarget: noticeLayout.computeZoomRect(sign.screen, 1, null),
+    zoomCurrent: noticeLayout.computeZoomRect(sign.screen, 1, null),
     zoomRaf: null,
     readyEl: null,
     ended: false,
@@ -1551,6 +1568,9 @@ function attachNoticeScreen(pose, el, attempt) {
   pose.handEls = parts("notice-hand-left", "notice-hand-right");
   const chalk = doc.getElementById("notice-chalk");
   if (chalk) chalk.setAttribute("fill", pose.level.color);
+  // The level glyph is the theme's own string, never the notice's.
+  pose.glyphEl = doc.getElementById("notice-level-glyph");
+  if (pose.glyphEl) pose.glyphEl.textContent = pose.level.prompt;
   // A reused document may still show the last pose's hand and zoom.
   pose.side = "right";
   zoomEl.setAttribute("transform", "");
@@ -1595,33 +1615,38 @@ function createNoticeSvgElement(doc, tag, attrs) {
 function buildNoticeScreenLine(pose) {
   const doc = pose.doc;
   const group = pose.lineGroup;
+  const geom = pose.sign.line;
   while (group.firstChild) group.removeChild(group.firstChild);
-  const baseline = noticeLayout.LINE_BASELINE_Y;
+  const baseline = geom.baselineY;
   const line = createNoticeSvgElement(doc, "g", { id: "notice-line-content" });
-  const prompt = createNoticeSvgElement(doc, "text", {
-    x: noticeLayout.LINE_START_X,
-    y: baseline,
-    fill: pose.level.color,
-    "font-size": noticeLayout.PROMPT_FONT_SIZE,
-    "font-family": NOTICE_CHALK_FONT_STACK,
-  });
-  prompt.textContent = pose.level.prompt;
+  // With a level badge on the board the line is the title alone.
+  let prompt = null;
+  if (!pose.glyphEl) {
+    prompt = createNoticeSvgElement(doc, "text", {
+      x: geom.startX,
+      y: baseline,
+      fill: pose.level.color,
+      "font-size": geom.promptFontSize,
+      "font-family": NOTICE_CHALK_FONT_STACK,
+    });
+    prompt.textContent = pose.level.prompt;
+  }
   const title = createNoticeSvgElement(doc, "text", {
-    x: noticeLayout.LINE_START_X,
+    x: geom.startX,
     y: baseline,
-    fill: NOTICE_TITLE_COLOR,
-    "font-size": noticeLayout.TITLE_FONT_SIZE,
+    fill: pose.sign.titleColor,
+    "font-size": geom.titleFontSize,
     "font-family": NOTICE_CHALK_FONT_STACK,
   });
   title.textContent = pose.title;
-  line.appendChild(prompt);
+  if (prompt) line.appendChild(prompt);
   line.appendChild(title);
   group.appendChild(line);
   const feedback = createNoticeSvgElement(doc, "text", {
-    x: noticeLayout.LINE_START_X,
+    x: geom.startX,
     y: baseline,
-    fill: noticeLayout.LEVELS.success.color,
-    "font-size": noticeLayout.TITLE_FONT_SIZE,
+    fill: pose.sign.feedbackColor,
+    "font-size": geom.titleFontSize,
     "font-family": NOTICE_CHALK_FONT_STACK,
     visibility: "hidden",
   });
@@ -1649,11 +1674,19 @@ function measureNoticeText(node, text, fontSize) {
 // running, so the new plan simply continues from the same elapsed time.
 function layoutNoticeScreenLine(pose) {
   if (!pose.lineEl) return;
-  const promptWidth = measureNoticeText(pose.promptEl, pose.level.prompt, noticeLayout.PROMPT_FONT_SIZE);
-  const titleWidth = measureNoticeText(pose.titleEl, pose.title, noticeLayout.TITLE_FONT_SIZE);
-  const line = noticeLayout.layoutLine(promptWidth, titleWidth);
+  const geom = pose.sign.line;
+  const promptWidth = pose.promptEl
+    ? measureNoticeText(pose.promptEl, pose.level.prompt, geom.promptFontSize)
+    : 0;
+  const titleWidth = measureNoticeText(pose.titleEl, pose.title, geom.titleFontSize);
+  const line = noticeLayout.layoutLine(promptWidth, titleWidth, pose.sign);
+  if (pose.promptEl) pose.promptEl.setAttribute("x", String(line.promptX));
   pose.titleEl.setAttribute("x", String(line.titleX));
-  pose.plan = noticeLayout.buildMarqueePlan(line.overflow);
+  if (pose.feedbackEl) {
+    const feedbackWidth = measureNoticeText(pose.feedbackEl, noticeLayout.COPY_FEEDBACK_TEXT, geom.titleFontSize);
+    pose.feedbackEl.setAttribute("x", String(noticeLayout.layoutLine(0, feedbackWidth, pose.sign).titleX));
+  }
+  pose.plan = noticeLayout.buildMarqueePlan(line.overflow, pose.sign);
   pose.dwellMs = pose.fixedDwellMs || noticeLayout.computeDwellMs(pose.plan);
   applyNoticeScreenOffset(pose, true);
   if (pose.runningSince !== null) scheduleNoticeScreenDwell(pose);
@@ -1742,14 +1775,14 @@ function handleNoticeScreenPointer(input) {
   const point = { x: input.x, y: input.y };
   // Hover is tested against where the board is heading, so a board still
   // growing toward the cursor never reads as a leave.
-  const over = noticeLayout.pointInRect(point, pose.hovering ? pose.zoomTarget : noticeLayout.signRect(pose.side));
+  const over = noticeLayout.pointInRect(point, pose.hovering ? pose.zoomTarget : noticeLayout.signRect(pose.side, pose.sign));
   if (input.type === "wheel") {
     if (!over) return;
     if (!pose.hovering) enterNoticeScreen(pose);
     const step = noticeLayout.stepWheelZoom(pose.wheelScale, input.deltaY, {
       deltaMode: input.deltaMode,
       carry: pose.wheelCarry,
-      maxScale: noticeLayout.maxZoomScale(noticeLayout.SCREEN_RECT, pose.visibleRect),
+      maxScale: noticeLayout.maxZoomScale(pose.sign.screen, pose.visibleRect),
     });
     pose.wheelCarry = step.carry;
     pose.wheelScale = step.scale;
@@ -1795,9 +1828,9 @@ function leaveNoticeScreen(pose) {
 }
 
 function setNoticeScreenZoom(pose, scale) {
-  const cap = noticeLayout.maxZoomScale(noticeLayout.SCREEN_RECT, pose.visibleRect);
+  const cap = noticeLayout.maxZoomScale(pose.sign.screen, pose.visibleRect);
   const target = noticeLayout.computeZoomRect(
-    noticeLayout.signRect(pose.side),
+    noticeLayout.signRect(pose.side, pose.sign),
     Math.min(cap, Math.max(1, scale)),
     pose.visibleRect
   );
@@ -1816,7 +1849,7 @@ function animateNoticeScreenZoom(pose) {
     if (!pose.zoomEl) return;
     pose.zoomEl.setAttribute("transform", rect.scale === 1
       ? ""
-      : noticeLayout.zoomTransform(noticeLayout.SCREEN_RECT, toCarrierFrame(pose, rect)));
+      : noticeLayout.zoomTransform(pose.sign.screen, toCarrierFrame(pose, rect)));
   };
   const from = pose.zoomCurrent;
   const to = pose.zoomTarget;
@@ -1841,8 +1874,12 @@ function animateNoticeScreenZoom(pose) {
 
 // The zoom group sits inside #notice-sign-car, which is translated to the hand
 // holding the sign; zoom rects are absolute, so shift them into that frame.
+function noticeLeftHandDx(pose) {
+  return Number.isFinite(pose.sign.leftHandDx) ? pose.sign.leftHandDx : 0;
+}
+
 function toCarrierFrame(pose, rect) {
-  const dx = pose.side === "left" ? noticeLayout.LEFT_HAND_DX : 0;
+  const dx = pose.side === "left" ? noticeLeftHandDx(pose) : 0;
   return { ...rect, x: rect.x - dx };
 }
 
@@ -1871,6 +1908,7 @@ function scheduleNoticeSignToss(pose) {
   if (pose.tossTimer) { clearTimeout(pose.tossTimer); pose.tossTimer = null; }
   if (pose.ended || pose.reducedMotion || pose.hovering || pose.tossStart !== null) return;
   if (!pose.carrierEl || !pose.armsEls || !pose.handEls) return;
+  if (!Number.isFinite(pose.sign.leftHandDx)) return;
   pose.tossTimer = setTimeout(() => {
     pose.tossTimer = null;
     startNoticeSignToss(pose);
@@ -1892,17 +1930,17 @@ function startNoticeSignToss(pose) {
     if (pose.ended) return;
     const t = (Date.now() - pose.tossStart) / noticeLayout.TOSS_MS;
     if (t < 1) {
-      const at = noticeLayout.tossPose(from, t);
+      const at = noticeLayout.tossPose(from, t, pose.sign);
       applyNoticeSignPlacement(pose, at.dx, at.dy, at.arms, false);
       pose.tossRaf = requestAnimationFrame(tick);
       return;
     }
     pose.tossStart = null;
     pose.side = from === "left" ? "right" : "left";
-    applyNoticeSignPlacement(pose, pose.side === "left" ? noticeLayout.LEFT_HAND_DX : 0, 0, pose.side, true);
+    applyNoticeSignPlacement(pose, pose.side === "left" ? noticeLeftHandDx(pose) : 0, 0, pose.side, true);
     // Main hit-tests clicks against the reported rect: tell it where the
     // board landed.
-    pose.zoomTarget = noticeLayout.computeZoomRect(noticeLayout.signRect(pose.side), 1, null);
+    pose.zoomTarget = noticeLayout.computeZoomRect(noticeLayout.signRect(pose.side, pose.sign), 1, null);
     pose.zoomCurrent = pose.zoomTarget;
     reportNoticeScreenStatus(pose);
     pose.nextTossAt = Date.now() + noticeLayout.TOSS_HOLD_MS;
@@ -3177,7 +3215,39 @@ function _getLayerTarget(layer, rawDx, rawDy) {
   return [rawDx * scale, rawDy * scale];
 }
 
+// ── Aim layers (mode "rotate" / "foreshorten") ──
+// The angle is measured in the art's own frame, so a pet drawn mirrored has to
+// mirror the cursor's horizontal offset too: the barrel that rests at −14° in
+// the art points the other way once #pet-facing-stage (.mini-left) or
+// #pet-asset-direction-stage flips it. Same composed answer the accessory
+// layer uses, so the two can never disagree about which way the pet faces.
+function _isAimMirrored() {
+  return miniLeftFlip !== shouldApplyMiniAssetFlip(currentState);
+}
+
+// The cursor sample for this frame, or null when the renderer has none (no
+// aim-move yet, or tick.js's eye-move(0, 0) zeroing) — which returns the aim
+// to its rest pose.
+function _aimSampleForFrame() {
+  if (!_aimSample || !_aimViewBox) return null;
+  return {
+    x: _aimSample.x,
+    y: _aimSample.y,
+    w: _aimSample.w,
+    h: _aimSample.h,
+    mirrored: _isAimMirrored(),
+  };
+}
+
+function _aimTargetFor(layer, sample) {
+  if (!sample || !_aimViewBox) return aimTracking.REST;
+  return aimTracking.computeAimTarget(layer.aim, sample, _aimViewBox) || aimTracking.REST;
+}
+
 function _layerNeedsAnimation(layer, rawDx, rawDy) {
+  if (layer.aim) {
+    return !aimTracking.isAimSettled(layer.aim, _aimTargetFor(layer, _aimSampleForFrame()));
+  }
   const [tx, ty] = _getLayerTarget(layer, rawDx, rawDy);
   return Math.abs(layer.x - tx) >= LAYER_SETTLE_EPSILON
     || Math.abs(layer.y - ty) >= LAYER_SETTLE_EPSILON;
@@ -3215,12 +3285,18 @@ function _initLayeredTracking(svgDoc) {
       }
     }
 
+    // `mode` picks how the layer follows: "translate" (the default, and the
+    // only behaviour themes without `mode` have ever had), "rotate" or
+    // "foreshorten". Only the two aim modes need a cursor sample.
+    const aim = aimTracking.createAimLayer(layerCfg);
+
     _trackingLayers[layerName] = {
       wrappers,
       maxOffset: layerCfg.maxOffset || 10,
       ease: layerCfg.ease || 0.15,
       x: 0,
       y: 0,
+      aim,
     };
   }
 
@@ -3243,9 +3319,27 @@ function _startLayerAnimLoop() {
 
     const rawDx = _layerTargetDx;
     const rawDy = _layerTargetDy;
+    const aimSample = _aimSampleForFrame();
     let allSettled = true;
 
     for (const layer of Object.values(_trackingLayers)) {
+      if (layer.aim) {
+        // Aim layer: ease the layer's own angle / foreshortening towards the
+        // target this sample asks for, then write the composed transform.
+        const target = _aimTargetFor(layer, aimSample);
+        const next = aimTracking.easeAim(layer.aim, target, layer.aim.ease);
+        layer.aim.angle = next.angle;
+        layer.aim.scaleX = next.scaleX;
+
+        if (!aimTracking.isAimSettled(layer.aim, target)) allSettled = false;
+
+        const transform = aimTracking.aimTransform(layer.aim, layer.aim);
+        for (const w of layer.wrappers) {
+          w.setAttribute("transform", transform);
+        }
+        continue;
+      }
+
       // Scale the pre-calculated offset (from tick.js, already in [-maxOffset, maxOffset])
       // to this layer's range. No second normalization — tick.js already did it.
       const [tx, ty] = _getLayerTarget(layer, rawDx, rawDy);
@@ -3309,6 +3403,8 @@ function _cleanupLayeredTracking() {
   _trackingLayers = null;
   _layerTargetDx = 0;
   _layerTargetDy = 0;
+  _aimSample = null;
+  _aimViewBox = null;
   _layeredTrackingObj = null;
   _layeredTrackingDocument = null;
 }
@@ -3548,7 +3644,7 @@ function recoverFromSystemWake(payload) {
   finishSystemWake(status);
 }
 
-window.electronAPI.onEyeMove((dx, dy) => {
+window.electronAPI.onEyeMove((dx, dy, aim) => {
   const effectiveDx = miniLeftFlip ? -dx : dx;
   lastEyeDx = effectiveDx;
   lastEyeDy = dy;
@@ -3571,6 +3667,12 @@ window.electronAPI.onEyeMove((dx, dy) => {
     // Layered tracking: store targets, RAF loop handles easing
     _layerTargetDx = effectiveDx;
     _layerTargetDy = dy;
+    // Aim layers rotate by the direction to the *unclipped* cursor, which the
+    // eye offset above cannot express — tick.js sends it alongside. No sample
+    // (state change, mouse idle, an older main) means "back to rest".
+    _aimSample = aimTracking.normalizeAimSample(aim);
+    const viewBox = _aimSample ? resolveViewBox(currentState, currentDisplayedSvg) : null;
+    _aimViewBox = viewBox && viewBox.width > 0 && viewBox.height > 0 ? viewBox : null;
     _startLayerAnimLoop();
     return;
   }

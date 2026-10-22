@@ -67,6 +67,11 @@ function createNoticeScreenRuntime(options = {}) {
   const onPoseEnded = options.onPoseEnded || (() => {});
   // Right-click on the board: return true to take it instead of copying.
   const onBoardContextMenu = options.onBoardContextMenu || (() => false);
+  // No sign up, but a notice's card is still waiting behind it: return true to
+  // hand it over on a plain click, false to let the click be an ordinary poke.
+  const onHeldCardClick = typeof options.onHeldCardClick === "function"
+    ? options.onHeldCardClick
+    : null;
   const now = options.now || (() => Date.now());
 
   // The pose main asked for: which notice, which file. Set on begin(), cleared
@@ -77,6 +82,10 @@ function createNoticeScreenRuntime(options = {}) {
   let reported = null;
   let hitWindowActive = false;
   let begunAt = 0;
+  // Every begin() gets a token, so a late settlement can tell whether the sign
+  // it belongs to is still the one in flight — a keyed re-push reuses the
+  // notice id, so the id alone cannot answer that.
+  let beginSeq = 0;
 
   function isPoseLive() {
     return !!(
@@ -96,8 +105,9 @@ function createNoticeScreenRuntime(options = {}) {
   }
 
   function begin(payload, notice, file) {
-    if (!payload || typeof file !== "string" || !file) return false;
+    if (!payload || typeof file !== "string" || !file) return 0;
     pending = Object.freeze({
+      seq: ++beginSeq,
       id: payload.id || null,
       file,
       // Frozen store objects; keep the reference, not a copy of the store.
@@ -106,7 +116,7 @@ function createNoticeScreenRuntime(options = {}) {
     reported = null;
     begunAt = now();
     syncHitWindow();
-    return true;
+    return pending.seq;
   }
 
   function reset() {
@@ -144,22 +154,42 @@ function createNoticeScreenRuntime(options = {}) {
 
   // The displayed-visual projection committed something else: whatever the
   // renderer last said, the head screen is no longer what the hit window sees.
+  // This also covers a sign that never reached the screen at all (the renderer
+  // refused the request and drew a fallback instead): reported is null, but
+  // the pending sign is just as dead, and leaving it set held its card back
+  // forever — a click could not release a card whose sign was never there.
   function handleVisualCommitted(visual) {
     if (!pending) return;
     if (visual && visual.file === pending.file) {
       syncHitWindow();
       return;
     }
-    if (reported) {
-      const id = pending.id;
-      pending = null;
-      reported = null;
-      syncHitWindow();
-      try { onPoseEnded(id, "visual"); } catch {}
-      onPoseInterrupted(id);
-      return;
-    }
+    const id = pending.id;
+    pending = null;
+    reported = null;
     syncHitWindow();
+    try { onPoseEnded(id, "visual"); } catch {}
+    onPoseInterrupted(id);
+  }
+
+  // The sign was asked for but will not be shown (the projection settled it as
+  // failed or superseded). Release the card it was holding back, but only if
+  // this is still the sign in flight — a newer notice may have taken over, and
+  // a keyed re-push reuses the notice id, so `seq` is what decides.
+  function abandon(id, seq) {
+    if (!pending) return false;
+    if (Number.isFinite(seq)) {
+      if (pending.seq !== seq) return false;
+    } else if (id !== null && id !== undefined && pending.id !== id) {
+      return false;
+    }
+    const was = pending.id;
+    pending = null;
+    reported = null;
+    syncHitWindow();
+    try { onPoseEnded(was, "cancel"); } catch {}
+    onPoseInterrupted(was);
+    return true;
   }
 
   // Hit-window client coordinates → screen coordinates → viewBox units.
@@ -202,11 +232,19 @@ function createNoticeScreenRuntime(options = {}) {
 
   // Left-click from the hit window while the sign is up. True means it landed
   // on the board and the card was asked for; false means it was an ordinary
-  // click on the pet.
+  // click on the pet. With the sign down, a card may still be waiting behind
+  // it: onHeldCardClick lets main hand that card over on a plain click.
   function handleHitClick(event, point) {
-    if (!isPoseLive()) return false;
     const hitWc = getHitWebContents();
     if (!event || !isLiveWebContents(hitWc) || event.sender !== hitWc) return false;
+    if (!isPoseLive()) {
+      if (!onHeldCardClick) return false;
+      try {
+        return onHeldCardClick() === true;
+      } catch {
+        return false;
+      }
+    }
     const input = point && typeof point === "object" ? point : {};
     const viewBoxPoint = toViewBoxPoint(input.clientX, input.clientY);
     if (!viewBoxPoint || !pointInRect(viewBoxPoint, reported.rect)) return false;
@@ -246,6 +284,7 @@ function createNoticeScreenRuntime(options = {}) {
   return {
     begin,
     reset,
+    abandon,
     handleRendererStatus,
     handleVisualCommitted,
     handleHitPointer,

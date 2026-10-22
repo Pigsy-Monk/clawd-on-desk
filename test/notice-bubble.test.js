@@ -374,7 +374,7 @@ describe("notice bubble contract", () => {
     });
     const bubble = initNoticeBubble(ctx);
     ctx.noticeStore.push(notice("n1"));
-    assert.deepEqual(bubble.getBubbleWindow().bounds, { x: 190, y: 486, width: 340, height: 150 });
+    assert.deepEqual(bubble.getBubbleWindow().bounds, { x: 190, y: 482, width: 340, height: 150 });
     bubble.cleanup();
   });
 
@@ -457,6 +457,23 @@ describe("cards held back for the notice sign", () => {
     assert.equal(bubble.hasHeldNotices(), false);
     assert.equal(bubble.revealHeldNotices(), 0);
     assert.equal(bubble.getBubbleWindow(), null);
+    bubble.cleanup();
+  });
+
+  it("holds per notice: a card-presented push is shown while a bubble one waits", () => {
+    const asked = [];
+    const ctx = createCtx({
+      shouldHoldNotice: (n) => { asked.push(n.id); return n.presentation !== "card"; },
+    });
+    const bubble = initNoticeBubble(ctx);
+    ctx.noticeStore.push(notice("bubble-1", { presentation: "bubble" }));
+    ctx.noticeStore.push(notice("card-1", { presentation: "card" }));
+    assert.deepEqual(asked, ["bubble-1", "card-1"]);
+    assert.deepEqual(lastShown(bubble.getBubbleWindow()), ["card-1"], "only the card push is on screen");
+    assert.equal(bubble.hasHeldNotices(), true, "the bubble push still waits behind the sign");
+
+    assert.equal(bubble.revealHeldNotices(), 1);
+    assert.deepEqual(lastShown(bubble.getBubbleWindow()), ["bubble-1", "card-1"]);
     bubble.cleanup();
   });
 
@@ -892,6 +909,48 @@ describe("notice-bubble.html", () => {
       assert.match(rule, /body\[data-notice-style/, `scoped: ${rule.trim()}`);
       assert.doesNotMatch(rule, /data-notice-style="card"/, "the card style gets no overrides");
     }
+  });
+
+  it("lets the Calico theme bring its own card skin, whatever the style pref", () => {
+    const source = textOf(findAll(document, (node) => node.name === "script")[0]);
+    const css = textOf(findAll(document, (node) => node.name === "style")[0]);
+    assert.match(source, /const THEME_CARD_SKINS = new Map\(\[\["calico", "calico"\]\]\);/);
+    // The theme override runs after the pref, so it wins; the pref list itself
+    // stays the three user styles.
+    assert.match(source, /if \(THEME_CARD_SKINS\.has\(presentation\.themeId\)\) \{\s*document\.body\.dataset\.noticeStyle = THEME_CARD_SKINS\.get\(presentation\.themeId\);/);
+    assert.match(source, /else if \(style === "calico"\) buildCalicoSkin\(element\);/);
+    // The tail goes on the carrier only; the ears stay on the pet's head sign,
+    // so the card builds none.
+    assert.match(source, /function buildCalicoSkin\(element\) \{\s*element\.appendChild\(buildCalicoPaper\(\)\);/);
+    assert.doesNotMatch(source, /buildCalicoEar/);
+    assert.doesNotMatch(css, /skin-c-ear/);
+    // Head up, tail down: one tail, always on the bottom card's bottom edge,
+    // whichever side the pet is on.
+    assert.match(source, /syncCalicoTail\(element, element === elements\[elements\.length - 1\]\);/);
+    assert.match(css, /body\[data-notice-style="calico"\] \.skin-c-tail \{ left: calc\(100% - 70px\); top: calc\(100% - 6px\); \}/);
+    assert.match(css, /body\[data-notice-style="calico"\]\[data-calico-tail="on"\] \{ --gutter-bottom: 34px; \}/);
+    // It sways, and stands still for reduced motion.
+    assert.match(css, /\.skin-c-tail svg \{[^}]*animation: skin-c-sway 3\.2s ease-in-out infinite;/);
+    assert.match(css, /body\[data-notice-style="calico"\] \.skin-c-tail svg \{ animation: none !important; \}/);
+    assert.doesNotMatch(css, /calico"\] \.card\[data-tail="(top|left|right)"\] \.skin-c-tail/);
+    // A level change swaps the glyph by stylesheet, never rebuilds the skin.
+    for (const level of ["info", "success", "warn", "error"]) {
+      assert.ok(css.includes(`.card[data-level="${level}"] .glyph-${level}`), `${level} glyph`);
+    }
+    // The skin is built node by node, like every other skin.
+    const skin = source.slice(source.indexOf("// Calico's skin."), source.indexOf("// The tail goes on the carrier only"));
+    assert.ok(skin.length > 1000, "the calico skin is inline");
+    assert.doesNotMatch(skin, /innerHTML|insertAdjacentHTML|outerHTML/);
+  });
+
+  it("keeps a plain Calico text card one fixed size, cutting long text", () => {
+    const css = textOf(findAll(document, (node) => node.name === "style")[0]);
+    const source = textOf(findAll(document, (node) => node.name === "script")[0]);
+    assert.match(css, /body\[data-notice-style="calico"\] \.card\[data-kind="text"\]\[data-pose="false"\]\[data-expandable="false"\] \{ height: 88px; \}/);
+    assert.match(css, /\.card:not\(\.stretch-card\) \.title \{[^}]*white-space: nowrap;[^}]*text-overflow: ellipsis;/);
+    assert.match(css, /\.card:not\(\.stretch-card\) \.body \{[^}]*-webkit-line-clamp: 2;[^}]*max-height: 36px;[^}]*overflow: hidden;/);
+    // Its fixed slots are not typed out: typing would size them per line.
+    assert.match(source, /if \(style === "calico"\) return;/);
   });
 
   it("bundles its display fonts locally and lets the CSP load them", () => {

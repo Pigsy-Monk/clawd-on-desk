@@ -1,5 +1,10 @@
 "use strict";
 
+const {
+  resolveSign: resolveNoticeSign,
+  DEFAULT_SIGN: DEFAULT_NOTICE_SIGN,
+} = require("./notice-screen-layout");
+
 // Defaults used when theme.json omits optional fields.
 
 const DEFAULT_SOUNDS = {
@@ -79,6 +84,145 @@ const SAFE_ACCESSORY_ITEM_ID = /^[a-z][a-z0-9-]{0,31}$/;
 const IDLE_EASTER_EGG_MAX_DURATION_MS = 60000;
 const IDLE_EASTER_EGG_MAX_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 
+// trackingLayers: which keys each `mode` accepts. A key outside its mode's set
+// is an author mistake (a `behind` on a foreshorten layer, a `minAngle` on a
+// layer that never rotates) and is reported rather than silently ignored.
+const TRACKING_LAYER_MODES = ["translate", "rotate", "foreshorten"];
+const TRACKING_LAYER_COMMON_KEYS = ["mode", "ids", "classes", "maxOffset", "ease"];
+const TRACKING_LAYER_KEYS = {
+  translate: new Set(TRACKING_LAYER_COMMON_KEYS),
+  rotate: new Set([
+    ...TRACKING_LAYER_COMMON_KEYS,
+    "pivot", "aimOrigin", "restAngle", "minAngle", "maxAngle", "rampPx", "behind",
+  ]),
+  foreshorten: new Set([
+    ...TRACKING_LAYER_COMMON_KEYS,
+    "pivot", "aimOrigin", "maxAngle", "rampPx", "when",
+  ]),
+};
+const TRACKING_LAYER_BEHIND_MODES = ["mirror", "clamp"];
+const TRACKING_LAYER_WHEN_MODES = ["behind"];
+
+function isPointPair(value) {
+  return Array.isArray(value) && value.length === 2
+    && value.every((n) => typeof n === "number" && Number.isFinite(n));
+}
+
+function isFiniteNumberValue(value) {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+/**
+ * Validate `eyeTracking.trackingLayers`.
+ *
+ * Every layer has always been "translate", so a layer without `mode` keeps the
+ * original (unvalidated beyond its own types) shape. `rotate` / `foreshorten`
+ * are the aim modes: they need a `pivot`, and their angle limits have to keep
+ * the rest direction reachable, otherwise the art would jump the moment a
+ * cursor appears.
+ */
+function validateTrackingLayers(eyeTracking, errors) {
+  const layers = eyeTracking && eyeTracking.trackingLayers;
+  if (layers === undefined) return;
+  if (!isPlainObject(layers)) {
+    errors.push("eyeTracking.trackingLayers must be an object when present");
+    return;
+  }
+
+  for (const [name, layer] of Object.entries(layers)) {
+    const path = `eyeTracking.trackingLayers.${name}`;
+    if (!isPlainObject(layer)) {
+      errors.push(`${path} must be an object`);
+      continue;
+    }
+
+    let mode = "translate";
+    if (layer.mode !== undefined) {
+      if (!TRACKING_LAYER_MODES.includes(layer.mode)) {
+        errors.push(`${path}.mode must be one of ${TRACKING_LAYER_MODES.join(" / ")}, got ${JSON.stringify(layer.mode)}`);
+        continue;
+      }
+      mode = layer.mode;
+    }
+
+    const allowed = TRACKING_LAYER_KEYS[mode];
+    for (const key of Object.keys(layer)) {
+      if (!allowed.has(key)) {
+        errors.push(`${path}.${key} is not a valid field for mode "${mode}"`);
+      }
+    }
+
+    for (const key of ["ids", "classes"]) {
+      if (layer[key] === undefined) continue;
+      if (!Array.isArray(layer[key]) || layer[key].length === 0
+        || !layer[key].every((entry) => typeof entry === "string" && entry.length > 0)) {
+        errors.push(`${path}.${key} must be a non-empty array of non-empty strings`);
+      }
+    }
+
+    if (layer.maxOffset !== undefined && !(isFiniteNumberValue(layer.maxOffset) && layer.maxOffset > 0)) {
+      errors.push(`${path}.maxOffset must be a finite number greater than 0`);
+    }
+
+    if (layer.ease !== undefined && !(isFiniteNumberValue(layer.ease) && layer.ease > 0 && layer.ease <= 1)) {
+      errors.push(`${path}.ease must be a finite number in (0, 1]`);
+    }
+
+    if (mode === "translate") continue;
+
+    if (!isPointPair(layer.pivot)) {
+      errors.push(`${path}.pivot must be an [x, y] pair of finite numbers`);
+    }
+    if (layer.aimOrigin !== undefined && !isPointPair(layer.aimOrigin)) {
+      errors.push(`${path}.aimOrigin must be an [x, y] pair of finite numbers when present`);
+    }
+    if (layer.rampPx !== undefined && !(isFiniteNumberValue(layer.rampPx) && layer.rampPx >= 0)) {
+      errors.push(`${path}.rampPx must be a finite number greater than or equal to 0`);
+    }
+
+    if (mode === "rotate") {
+      if (layer.restAngle !== undefined && !isFiniteNumberValue(layer.restAngle)) {
+        errors.push(`${path}.restAngle must be a finite number of degrees`);
+      }
+      if (!isFiniteNumberValue(layer.minAngle) || !isFiniteNumberValue(layer.maxAngle)) {
+        errors.push(`${path}.minAngle and ${path}.maxAngle must be finite numbers of degrees`);
+      } else if (!(layer.minAngle <= 0 && layer.maxAngle >= 0)) {
+        errors.push(`${path}.minAngle must be <= 0 and ${path}.maxAngle must be >= 0 (the rest angle stays reachable)`);
+      }
+      if (layer.behind !== undefined && !TRACKING_LAYER_BEHIND_MODES.includes(layer.behind)) {
+        errors.push(`${path}.behind must be one of ${TRACKING_LAYER_BEHIND_MODES.join(" / ")}, got ${JSON.stringify(layer.behind)}`);
+      }
+      continue;
+    }
+
+    if (!(isFiniteNumberValue(layer.maxAngle) && layer.maxAngle > 0)) {
+      errors.push(`${path}.maxAngle must be a finite number of degrees greater than 0`);
+    }
+    if (layer.when !== undefined && !TRACKING_LAYER_WHEN_MODES.includes(layer.when)) {
+      errors.push(`${path}.when must be one of ${TRACKING_LAYER_WHEN_MODES.join(" / ")}, got ${JSON.stringify(layer.when)}`);
+    }
+  }
+}
+
+// reactions["notice-screen"].sign: the renderer quietly falls back to clawd's
+// chalkboard geometry for a sign it cannot read, which would put the title off
+// the theme's own board; say so here instead.
+function validateNoticeSign(reactions, errors) {
+  const entry = isPlainObject(reactions) ? reactions["notice-screen"] : null;
+  if (!isPlainObject(entry) || entry.sign === undefined) return;
+  const pathName = 'reactions["notice-screen"].sign';
+  if (!isPlainObject(entry.sign)) {
+    errors.push(`${pathName} must be an object`);
+    return;
+  }
+  if (resolveNoticeSign(entry.sign) === DEFAULT_NOTICE_SIGN) {
+    errors.push(
+      `${pathName} needs screen {x, y, w, h} with positive w/h and line {startX, endX, baselineY, titleFontSize} `
+      + "with endX > startX and a positive titleFontSize"
+    );
+  }
+}
+
 function validateTheme(cfg) {
   const errors = [];
   const sleepMode = deriveSleepMode(cfg);
@@ -120,6 +264,9 @@ function validateTheme(cfg) {
       errors.push("eyeTracking.states must be a non-empty array when eyeTracking.enabled=true");
     }
   }
+
+  validateTrackingLayers(cfg.eyeTracking, errors);
+  validateNoticeSign(cfg.reactions, errors);
 
   // eyeTracking.states listed states must use .svg if enabled
   if (cfg.eyeTracking && cfg.eyeTracking.enabled && cfg.states) {

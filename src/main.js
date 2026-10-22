@@ -205,6 +205,7 @@ const { getRightSideMirrorFiles, isVisualMirrored, resolveMirroredFile } = requi
 const { createTestReactionHandler } = require("./test-reaction");
 const { createNoticeReactionHandler } = require("./notice-reaction");
 const { createNoticeScreenRuntime, registerNoticeScreenIpc } = require("./notice-screen-runtime");
+const { createMiniNoticePopout } = require("./mini-notice-popout");
 const { createStretchRuntime } = require("./stretch-runtime");
 const createMacHideController = require("./mac-hide");
 const {
@@ -344,6 +345,7 @@ const SIZES = {
 // `_settingsController.applyUpdate()`, which auto-persists.
 const prefsModule = require("./prefs");
 const { createSettingsController } = require("./settings-controller");
+const { createPrefsLiveReload } = require("./prefs-live-reload");
 const { loadOrCreateInstallationIdentity } = require("./remote-ssh-identity");
 const { createTranslator, i18n, SUPPORTED_LANGS } = require("./i18n");
 const { setClaudeCollectionWithConsent } = require("./claude-statusline-consent");
@@ -660,6 +662,19 @@ const _settingsController = createSettingsController({
     },
   },
 });
+// A hand edit of clawd-prefs.json used to need a restart, because the file is
+// read once above. Watch it and import the changed keys into the live store
+// (no pre-commit effects — see src/prefs-live-reload.js). This is what lets a
+// caller tune a notice/bubble duration and see the next card use it.
+const prefsLiveReload = createPrefsLiveReload({
+  prefsPath: PREFS_PATH,
+  prefs: prefsModule,
+  controller: _settingsController,
+  onError: (err) => console.warn("Clawd: live prefs reload failed:", err && err.message),
+});
+try { prefsLiveReload.start(); } catch (err) {
+  console.warn("Clawd: could not watch prefs:", err && err.message);
+}
 _settingsController.subscribeKey("agents", (_agents, snapshot) => {
   // A readable future-version prefs file may still change in memory for the
   // current process. An unreadable prefs file rejects mutations earlier in the
@@ -1739,13 +1754,27 @@ function canShowNoticeSign() {
     && !!resolveNoticeScreenFile();
 }
 
+// The head sign, or (docked at a screen edge) the jump out to show it: either
+// way a new notice goes on the sign, so its card waits behind it.
+function canShowAnyNoticeSign() {
+  return canShowNoticeSign()
+    || (typeof handleNoticeReaction.canPlayMini === "function" && handleNoticeReaction.canPlayMini());
+}
+
 function requestNoticeScreenReaction(payload, notice) {
   const file = resolveNoticeScreenFile();
   if (!file) return false;
-  noticeScreenRuntime.begin(payload, notice, file);
+  const signToken = noticeScreenRuntime.begin(payload, notice, file);
   let delivered = false;
   requestDisplayedVisual(_state.getCurrentState(), file, {
     source: "reaction",
+    // A sign the renderer refuses (or that is superseded before it lands) must
+    // release the card it was holding back. Sending the message is not the
+    // same as the sign being on screen.
+    onLogicalSettlement: (settled) => {
+      if (settled && settled.status === "committed") return;
+      noticeScreenRuntime.abandon(payload.id, signToken);
+    },
     deliver: (visualRequest) => {
       delivered = sendRawToRenderer("play-notice-reaction", { ...payload, visualRequest });
       return delivered;
@@ -2373,7 +2402,43 @@ const noticeScreenRuntime = createNoticeScreenRuntime({
     _menu.showStretchMenu({ onBoard: true });
     return true;
   },
+  // The sign is down but its notice's card is still held back: a plain click
+  // on the pet hands it over, so a short sign is never a dead end.
+  onHeldCardClick: () => {
+    if (!_noticeBubble || typeof _noticeBubble.hasHeldNotices !== "function") return false;
+    if (!_noticeBubble.hasHeldNotices()) return false;
+    return _noticeBubble.revealHeldNotices() > 0;
+  },
 });
+
+// ── A notice while docked (src/mini-notice-popout.js) ──
+// Docked at a screen edge the pet has no room for its head sign, so on a
+// theme with one it jumps out of the edge, shows the notice as usual, and
+// docks back at the same edge once the sign is down and no card is open.
+const miniNoticePopout = createMiniNoticePopout({
+  isMini: () => _mini.getMiniMode(),
+  isMiniTransitioning: () => _mini.getMiniTransitioning(),
+  getEdge: () => _mini.getMiniEdge(),
+  getPetBounds: () => getPetWindowBounds(),
+  getWorkArea: (b) => getNearestWorkArea(b.x + b.width / 2, b.y + b.height / 2),
+  exitMini: () => exitMiniMode(),
+  enterMini: (workArea, edge) => {
+    if (disableMiniModeCached) return;
+    _mini.enterMiniMode(workArea, false, edge);
+  },
+  playSign: (payload, notice) => requestNoticeScreenReaction(payload, notice),
+  isSignUp: () => !!noticeScreenRuntime.getPendingId(),
+  isCardOpen: () => {
+    const w = _noticeBubble.getBubbleWindow();
+    return !!(w && !w.isDestroyed() && w.isVisible());
+  },
+  revealCards: () => _noticeBubble.revealHeldNotices(),
+});
+
+// Either sign is up, holding a notice's card back.
+function getHeldSignNoticeId() {
+  return noticeScreenRuntime.getPendingId() || miniNoticePopout.getPendingId();
+}
 
 // Local notice history (~/.clawd/notice-history-v1) for the Dashboard's
 // Notices tab. It only observes store snapshots — memory on the notice path,
@@ -2394,7 +2459,10 @@ const _noticeBubbleCtx = {
   // is defined further down and only consulted once notices arrive.
   // During a stretch break every new card waits (no sign, no card) until the
   // break's card is gone; the store's expiry is paused meanwhile.
-  shouldHoldNewNotices: (fresh) => isStretchBusy() || (!fresh.some(isPoseNotice) && canShowNoticeSign()),
+  // A push that asked for its card (`presentation: "card"`, src/notice-store.js)
+  // is never held: it is shown straight away, for its ttl, with no click.
+  shouldHoldNotice: (notice) => isStretchBusy()
+    || (!isPoseNotice(notice) && notice.presentation !== "card" && canShowAnyNoticeSign()),
   onStretchAction: (action) => !!(stretchRuntime && stretchRuntime.handleAction(action)),
   get win() { return win; },
   // Deliberate: the notice stack is the pet "speaking", so it always follows
@@ -6007,6 +6075,9 @@ const handleNoticeReaction = createNoticeReactionHandler({
   hasPetWindow: () => !!(win && !win.isDestroyed()),
   sendToRenderer,
   playNoticeScreen: (payload, notice) => requestNoticeScreenReaction(payload, notice),
+  // Docked at a screen edge: jump out, show the sign, dock back.
+  hasMiniSign: () => !!resolveNoticeScreenFile(),
+  playMiniSign: (payload, notice) => miniNoticePopout.start(payload, notice),
 });
 
 // React once per snapshot, not once per notice: a burst of cards arriving
@@ -6047,10 +6118,12 @@ function reactToNewestNotice(newest) {
   }
   // The whole notice: the handler takes level, id and headline from it, and
   // the sign keeps it for copy-on-right-click.
-  handleNoticeReaction(newest);
+  // `presentation: "card"` skips the sign, which is the only thing that holds
+  // a card back — the card is already on screen and stays for its ttl.
+  handleNoticeReaction(newest, { skipSign: newest.presentation === "card" });
   // The bubble held the new cards for the sign; if the sign is not showing
   // this notice after all (another theme, a gate, delivery failed), show them.
-  if (noticeScreenRuntime.getPendingId() !== newest.id) _noticeBubble.revealHeldNotices();
+  if (getHeldSignNoticeId() !== newest.id) _noticeBubble.revealHeldNotices();
 }
 
 let noticeWaitingForStretch = null;
@@ -6088,7 +6161,7 @@ stretchRuntime = createStretchRuntime({
     if (pendingPermissions.length > 0) blockers.push("permission");
     if (petWindowRuntime.isPetEffectivelyHidden()) blockers.push("hidden");
     try { if (_isForegroundFullscreen()) blockers.push("fullscreen"); } catch {}
-    if (noticeScreenRuntime.getPendingId()) blockers.push("notice-sign");
+    if (getHeldSignNoticeId()) blockers.push("notice-sign");
     if (!win || win.isDestroyed()) blockers.push("no-window");
     return blockers;
   },
@@ -6588,6 +6661,7 @@ if (!gotTheLock) {
     try { stopUpdateScheduler(); } catch {}
     releasePowerSaveBlocker();
     flushRuntimeStateToPrefs();
+    try { prefsLiveReload.stop(); } catch {}
     globalShortcut.unregisterAll();
     void settingsSizePreviewSession.cleanup();
     permissionAutomationConfirmationRuntime.dispose();
