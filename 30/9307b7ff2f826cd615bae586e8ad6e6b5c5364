@@ -1,0 +1,20 @@
+tools/push-notice.py
+  s_524f90287b9754::t_ee4ffa6c25603e 22,24,236-242,398-405
+  s_524f90287b9754::t_4218c05ad13998 23
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.51-trip",
+  "base_commit_sha": "309307b7ff2f826cd615bae586e8ad6e6b5c5364",
+  "prompts": {},
+  "sessions": {
+    "s_524f90287b9754": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "52e2f200-1355-4ddd-b87c-9448f2c49c6a",
+        "model": "deepseek-v4-1-flash-261017"
+      },
+      "human_author": "zwsong <zwsong@trip.com>"
+    }
+  }
+}
