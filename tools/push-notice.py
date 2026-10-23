@@ -19,6 +19,9 @@ self-contained for anyone who cloned only agent-pet.
         --series "SHA-ALI 失败率=0.08,0.07,0.09@%" \
         --image trend.png
 
+    # a monitoring card that must be seen at once: no sign, no click
+    push-notice.py "引擎发布监控" --level warn --ttl-seconds 300 --presentation card
+
     # a keyed card: the next push under the same key refreshes this one in
     # place — same card, same spot in the stack — instead of stacking a twin
     push-notice.py "心跳" "仍在运行" --key heartbeat --ttl-seconds 30
@@ -230,6 +233,13 @@ def build_payload(args):
     if args.ttl_seconds is not None:
         payload["ttl"] = int(args.ttl_seconds * 1000)
 
+    # The pet's own presentation (`bubble`) holds a sign up first and keeps the
+    # card back until it is clicked. `card` asks for the card itself, at once,
+    # with no sign and no click — the right choice for a monitoring push the
+    # user may not be looking at. Omitted means the pet's own.
+    if args.presentation is not None:
+        payload["presentation"] = args.presentation
+
     # Only send a key when the caller gave one. An absent key is what makes a
     # push append a fresh card, and sending "" would be the same thing spelled
     # less clearly.
@@ -383,6 +393,16 @@ def parse_args(argv):
         help=(
             "seconds before the card auto-expires. Omit to let Clawd pick by "
             "level (info 20s, success 30s, warn 2min, error 5min)"
+        ),
+    )
+    parser.add_argument(
+        "--presentation",
+        choices=("bubble", "card"),
+        default=None,
+        help=(
+            "how Clawd shows the push. 'bubble' (default): the pet holds up a "
+            "sign first and the card waits for a click. 'card': the card "
+            "appears at once, no sign and no click, for its ttl"
         ),
     )
     parser.add_argument(
