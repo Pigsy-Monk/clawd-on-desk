@@ -1,0 +1,56 @@
+test/fixtures/linux-x11-input-hint-electron.js
+  aa04076af2fff49c 1-39
+test/settings-renderer-browser-env.test.js
+  s_138ac6a86ccdd7::t_85819805a43606 12600
+  s_fcfb4c3a34b5c9::t_85d381b23d191c 12629
+test/pr811-accessory-decisions.test.js
+  s_138ac6a86ccdd7::t_184cf58ec70cf5 353-354
+hooks/opencode-family-install.js
+  8bbe0a511df16a35 170,176,179-182,965-966
+test/doctor-opencode-managed.test.js
+  8bbe0a511df16a35 78,87-132
+src/linux-x11-input-hint.js
+  aa04076af2fff49c 70-75,87
+test/renderer-low-power.test.js
+  s_fcfb4c3a34b5c9::t_728ee6f83f3b44 5567-5574,5578-5589,5591,5593-5601,5603,5605-5614,5617-5624
+  s_fa7684e93f0db3::t_2ecc6b95a93e12 9-14
+  s_fa7684e93f0db3::t_a5a954ec07b765 5625-5626,5628-5637,5639-5645
+test/opencode-v2-registration.test.js
+  8bbe0a511df16a35 132-163
+src/doctor-detectors/opencode-managed-inspector.js
+  8bbe0a511df16a35 480-497,499-500,568-569
+test/linux-x11-input-hint-electron.test.js
+  aa04076af2fff49c 1-36
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.51-trip",
+  "base_commit_sha": "c0ff3d97bf6769afe33d5e8aa9d9c9e03150ddbf",
+  "prompts": {},
+  "sessions": {
+    "s_138ac6a86ccdd7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "47868ab7-a9cb-4264-bc3b-40f38125fd3e",
+        "model": "claude-opus-5.5"
+      },
+      "human_author": "zwsong <zwsong@trip.com>"
+    },
+    "s_fa7684e93f0db3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "54830dbf-2d5f-468b-9dba-2ecd4240c943",
+        "model": "claude-opus-5.5"
+      },
+      "human_author": "zwsong <zwsong@trip.com>"
+    },
+    "s_fcfb4c3a34b5c9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "91bf79ba-6310-4db7-a9c0-b11cfd6cb408",
+        "model": "claude-opus-5.5"
+      },
+      "human_author": "zwsong <zwsong@trip.com>"
+    }
+  }
+}
