@@ -23,9 +23,15 @@ const os = require("os");
 const path = require("path");
 const { spawn } = require("child_process");
 
-const DEFAULT_SCRIPT_PATH = path.join(
+// The skill ships in the repo so a clone is usable as-is; the shared skills
+// directory is kept as a fallback for machines that only have the personal copy.
+const BUNDLED_SCRIPT_PATH = path.join(
+  __dirname, "..", "skills", "feishu-atme-digest", "scripts", "feishu-atme-digest.py",
+);
+const SHARED_SCRIPT_PATH = path.join(
   os.homedir(), ".agents", "skills", "feishu-atme-digest", "bin", "feishu-atme-digest.py",
 );
+const DEFAULT_SCRIPT_PATH = BUNDLED_SCRIPT_PATH;
 const RUN_TIMEOUT_MS = 120000;
 
 // Time windows now live in ~/.feishu-atme/config.json (mentionWindowMinutes /
@@ -136,6 +142,10 @@ function createFeishuAtmeCommand(options = {}) {
   const spawnImpl = options.spawnImpl || spawn;
   const timeoutMs = Number.isFinite(options.timeoutMs) ? options.timeoutMs : RUN_TIMEOUT_MS;
   const existsSync = options.existsSync || fs.existsSync;
+  // Bundled copy first, then the personal one.
+  const resolvedScriptPath = existsSync(scriptPath) || scriptPath !== BUNDLED_SCRIPT_PATH
+    ? scriptPath
+    : (existsSync(SHARED_SCRIPT_PATH) ? SHARED_SCRIPT_PATH : scriptPath);
   const debugLog = typeof options.debugLog === "function" ? options.debugLog : null;
 
   let running = false;
@@ -200,7 +210,7 @@ function createFeishuAtmeCommand(options = {}) {
       // The time windows and row cap come from the skill's config.json, which is
       // re-read on every run, so tuning them does not need an app restart.
       child = spawnImpl(bin, [
-        scriptPath, "--json", "--no-push", "--no-dedupe",
+        resolvedScriptPath, "--json", "--no-push", "--no-dedupe",
         ...DEBUG_ARGS,
       ], {
         windowsHide: true,
@@ -253,8 +263,8 @@ function createFeishuAtmeCommand(options = {}) {
     // the callers already have the previous rows on screen.
     if (running) return Promise.resolve({ status: "busy" });
 
-    if (!existsSync(scriptPath)) {
-      return Promise.resolve(settle("missing", { scriptPath }));
+    if (!existsSync(resolvedScriptPath)) {
+      return Promise.resolve(settle("missing", { scriptPath: resolvedScriptPath }));
     }
 
     running = true;
@@ -314,7 +324,7 @@ function createFeishuAtmeCommand(options = {}) {
     }).catch((err) => settle("failed", { reason: trimReason(err && err.message) }));
   }
 
-  return { run, scriptPath };
+  return { run, scriptPath: resolvedScriptPath };
 }
 
 module.exports = {
