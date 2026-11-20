@@ -1,0 +1,25 @@
+src/session-hud.html
+  s_002438aca9425c::t_66ac86debce300 211-213,216-217
+  s_002438aca9425c::t_32204a026d65dd 215
+  s_002438aca9425c::t_9cb56eb7ade20a 198-199
+src/main.js
+  s_002438aca9425c::t_4b804e9666ad4e 4927,5005,5008-5016,5019-5026,5832-5842,5845-5848,6217-6220
+src/session-hud-renderer.js
+  s_002438aca9425c::t_66ac86debce300 534-537
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.52-trip",
+  "base_commit_sha": "2c15d81431b64f4ab77b69b3d7c839edcc9a190d",
+  "prompts": {},
+  "sessions": {
+    "s_002438aca9425c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7b96e943-bd4b-4ff3-91d0-4a71b31b7526",
+        "model": "deepseek-v4-1-flash-261017"
+      },
+      "human_author": "zwsong <zwsong@trip.com>"
+    }
+  }
+}
