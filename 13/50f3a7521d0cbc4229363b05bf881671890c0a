@@ -1,0 +1,29 @@
+skills/feishu-atme-digest/scripts/feishu-atme-digest.py
+  s_002438aca9425c::t_243043252c8bc2 1-1018
+skills/feishu-atme-digest/SKILL.md
+  s_002438aca9425c::t_e6a2c3f04e15c8 1-10,14-16,18-200,202-242,244-246
+  s_002438aca9425c::t_1d2f6b82c34e75 11-13
+  s_002438aca9425c::t_243043252c8bc2 17,201,243
+src/feishu-atme-command.js
+  s_002438aca9425c::t_80ed7b4876d08b 213,266-267,327
+  s_002438aca9425c::t_243043252c8bc2 29
+  s_002438aca9425c::t_b73b57f6a7de64 26-28,30-31,34,145-148
+skills/feishu-atme-digest/scripts/test-classify.py
+  s_002438aca9425c::t_243043252c8bc2 1-117
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.52-trip",
+  "base_commit_sha": "1350f3a7521d0cbc4229363b05bf881671890c0a",
+  "prompts": {},
+  "sessions": {
+    "s_002438aca9425c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7b96e943-bd4b-4ff3-91d0-4a71b31b7526",
+        "model": "deepseek-v4-1-flash-261017"
+      },
+      "human_author": null
+    }
+  }
+}
