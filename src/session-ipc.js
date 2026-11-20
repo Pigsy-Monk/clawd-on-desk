@@ -33,6 +33,17 @@ function registerSessionIpc(options = {}) {
     options.getDashboardWebContents,
     "getDashboardWebContents"
   );
+  // Optional: only the feat/notice-presentation HUD rows use it. A build without
+  // a link opener simply does not register the channel.
+  const openExternalLink = typeof options.openExternalLink === "function"
+    ? options.openExternalLink
+    : null;
+  const followUpFeishuChat = typeof options.followUpFeishuChat === "function"
+    ? options.followUpFeishuChat
+    : null;
+  const ignoreFeishuMessage = typeof options.ignoreFeishuMessage === "function"
+    ? options.ignoreFeishuMessage
+    : null;
   const getKimiQuotaStatus = requiredDependency(options.getKimiQuotaStatus, "getKimiQuotaStatus");
   const refreshKimiQuota = requiredDependency(options.refreshKimiQuota, "refreshKimiQuota");
   const getSessionHistory = requiredDependency(options.getSessionHistory, "getSessionHistory");
@@ -249,6 +260,24 @@ function registerSessionIpc(options = {}) {
   );
   on("session-hud:open-dashboard", () => showDashboard({ source: "hud" }));
   on("session-hud:set-pinned", (_event, value) => setSessionHudPinned(!!value));
+  // A Feishu digest row's link. The URL is validated in main before it reaches
+  // the OS browser; the renderer only forwards the string it was given.
+  if (openExternalLink) {
+    on("session-hud:open-link", (_event, href) => {
+      if (typeof href === "string" && href) openExternalLink(href);
+    });
+  }
+  if (followUpFeishuChat) {
+    on("session-hud:follow-up", (_event, payload) => {
+      if (payload && typeof payload === "object") followUpFeishuChat(payload);
+    });
+  }
+  if (ignoreFeishuMessage) {
+    on("session-hud:ignore", (_event, messageIds) => {
+      // A row stands for a conversation, so this arrives as a list.
+      if (Array.isArray(messageIds) && messageIds.length) ignoreFeishuMessage(messageIds);
+    });
+  }
 
   on("settings:open-dashboard", () => showDashboard({ source: "settings" }));
   on("show-dashboard", () => showDashboard());

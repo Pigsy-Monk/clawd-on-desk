@@ -72,6 +72,16 @@ const PNG_MIME = "image/png";
 // inflates the payload by a third and a legitimate screenshot is a few hundred
 // KB, but nothing above this reaches the renderer.
 const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
+
+// A list card is a stack of short rows — a digest, a queue — rather than a
+// paragraph. Each row is one line, so the cap is about how much a card can show
+// before it becomes a scroll rather than a glance.
+const LIST_KIND = "list";
+const MAX_ITEMS = 12;
+const MAX_ITEM_TEXT = 200;
+const MAX_ITEM_TAG = 2;
+const MAX_ITEM_WHO = 24;
+const MAX_ITEM_WHERE = 24;
 // The 8-byte PNG signature: 89 50 4E 47 0D 0A 1A 0A.
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 // Standard base64 alphabet with optional padding — nothing else. A `data:` URI
@@ -151,6 +161,36 @@ function normalizeTtl(value, level) {
 // how loud a card is.
 function normalizePresentation(value) {
   return value === "card" ? "card" : DEFAULT_PRESENTATION;
+}
+
+// A sticky card is a list to read, not an alert to clear: a click on its body
+// does nothing, so inspecting it cannot be the gesture that destroys it. Only a
+// literal `true` sticks — an absent or malformed value keeps the usual
+// click-to-dismiss behaviour every other pusher relies on. The × and the ttl
+// still retire it.
+function normalizeSticky(value) {
+  return value === true;
+}
+
+// Rows are plain data, never markup: tag / who / where / text are all rendered
+// with textContent. An item with no text is dropped rather than rendering an
+// empty line, and a malformed row does not sink the whole card.
+function normalizeItems(value) {
+  if (!Array.isArray(value)) return [];
+  const out = [];
+  for (const raw of value) {
+    if (out.length >= MAX_ITEMS) break;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+    const text = normalizeText(raw.text, MAX_ITEM_TEXT);
+    if (!text) continue;
+    out.push(Object.freeze({
+      tag: normalizeText(raw.tag, MAX_ITEM_TAG),
+      who: normalizeText(raw.who, MAX_ITEM_WHO),
+      where: normalizeText(raw.where, MAX_ITEM_WHERE),
+      text,
+    }));
+  }
+  return out;
 }
 
 // Only the exact string "trend" makes a chart card; everything else — absent,
@@ -292,6 +332,7 @@ function createNoticeStore(options = {}) {
     const title = normalizeText(raw.title, MAX_TITLE_LENGTH);
     const body = normalizeText(raw.body, MAX_BODY_LENGTH);
     const series = normalizeSeries(raw.series);
+    const items = normalizeItems(raw.items);
     const image = normalizeImage(raw.image);
     const declared = normalizeKind(raw.kind);
     // Series exist to be drawn, so their presence is what makes a chart card —
@@ -301,13 +342,17 @@ function createNoticeStore(options = {}) {
     // chart card with nothing to draw degrades to text, so the renderer is never
     // handed a sparkline with no points behind it.
     const pose = series.length > 0 ? null : normalizePose(raw.pose);
+    // Items make a list card for the same reason series make a chart card: the
+    // data is what the card is for, so sending rows means asking for rows.
     const kind = series.length > 0
       ? TREND_KIND
-      : (pose ? POSE_KIND : (declared === TREND_KIND ? DEFAULT_KIND : declared));
+      : (pose ? POSE_KIND
+        : (items.length > 0 ? LIST_KIND
+          : (declared === TREND_KIND || declared === LIST_KIND ? DEFAULT_KIND : declared)));
     // A card with no line, no chart, no picture and no figure has nothing to
     // say; refuse rather than render an empty box. A chart-only, image-only or
     // figure-only card is a legitimate notice, so those count as content too.
-    if (!title && !body && series.length === 0 && !image && !pose) return null;
+    if (!title && !body && series.length === 0 && !image && !pose && items.length === 0) return null;
 
     const level = normalizeLevel(raw.level);
     const ttl = normalizeTtl(raw.ttl, level);
@@ -322,7 +367,9 @@ function createNoticeStore(options = {}) {
       level,
       kind,
       presentation,
+      sticky: normalizeSticky(raw.sticky),
       series: Object.freeze(series),
+      items: Object.freeze(items),
       image,
       pose,
       ttl,
@@ -471,6 +518,8 @@ function createNoticeStore(options = {}) {
 
 module.exports = {
   createNoticeStore,
+  LIST_KIND,
+  MAX_ITEMS,
   DEFAULT_MAX_NOTICES,
   DEFAULT_TTL_MS,
   MIN_TTL_MS,
@@ -498,6 +547,8 @@ module.exports = {
     normalizeLevel,
     normalizeTtl,
     normalizePresentation,
+    normalizeSticky,
+    normalizeItems,
     normalizeKind,
     normalizePoints,
     normalizeSeriesEntry,

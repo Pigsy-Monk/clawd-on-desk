@@ -241,6 +241,21 @@ module.exports = function initMenu(ctx) {
     return macDockVisibility.apply(ctx.showDock);
   }
 
+  // Manual Feishu check. It sits in the work group next to Dashboard because it
+  // answers the same question — "what needs me?" — one click at a time.
+  // Deliberately not scheduled: no timer, no lifecycle hook (see
+  // src/feishu-atme-command.js). Empty when main.js has not wired the runner.
+  function buildFeishuAtmeMenuItems() {
+    if (typeof ctx.runFeishuAtme !== "function") return [];
+    return [{
+      label: t("feishuAtme"),
+      // Hiding the pet also hides the cards it would raise, so a click here
+      // would look like a dead button. The Show Pet item sits in the same menus.
+      enabled: !ctx.petHidden,
+      click: () => ctx.runFeishuAtme(t),
+    }];
+  }
+
   function buildTrayMenu() {
     if (!ctx.tray) return;
 
@@ -281,6 +296,7 @@ module.exports = function initMenu(ctx) {
           if (typeof ctx.openDashboard === "function") ctx.openDashboard();
         },
       },
+      ...buildFeishuAtmeMenuItems(),
       buildPermissionAutomationMenuItem(),
     ];
 
@@ -565,6 +581,7 @@ module.exports = function initMenu(ctx) {
           },
         ],
       },
+      ...buildFeishuAtmeMenuItems(),
       // Danger auto-approve sits at the tail of the work group: it governs how
       // agent permission requests are handled, and keeping it here (rather than
       // near the top) makes it harder to hit by accident.
