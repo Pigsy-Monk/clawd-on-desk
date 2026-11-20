@@ -4924,7 +4924,7 @@ const feishuAtmeCommand = createFeishuAtmeCommand({
 // The digest is a manual read: a pet click refreshes it, and clicks closer
 // together than this reuse what is already on screen instead of asking Feishu
 // again.
-const FEISHU_REFRESH_MIN_MS = 180_000;
+const FEISHU_REFRESH_MIN_MS = 60_000;
 let feishuRows = [];
 // "idle" until the first read. The panel shows the empty/failed states too, so
 // "nobody wrote to me" is distinguishable from "the feature is broken".
@@ -5001,16 +5001,29 @@ function revealFeishuPanel(options = {}) {
 // in kimi-quota-runtime.js: the read is the user's own account, it is cheap
 // (lark-cli only, no model unless a message is new), and it exists purely to
 // keep the click instant. Nothing else in this feature schedules itself.
-const FEISHU_POLL_MS = 15 * 60 * 1000;
 const FEISHU_FIRST_POLL_MS = 20 * 1000;
+const FEISHU_POLL_DEFAULT_MINUTES = 2;
 let feishuPollTimer = null;
+
+// Interval comes from config on every tick, so changing it does not need a
+// restart. A single re-armed timeout rather than setInterval for exactly that
+// reason.
+function feishuPollIntervalMs() {
+  const minutes = Number(feishuConfig().pollMinutes);
+  const safe = Number.isFinite(minutes) && minutes > 0 ? minutes : FEISHU_POLL_DEFAULT_MINUTES;
+  return Math.max(30, safe * 60) * 1000;
+}
 
 function startFeishuPolling() {
   if (feishuPollTimer) return;
-  const first = setTimeout(() => { refreshFeishuRows({ force: true }); }, FEISHU_FIRST_POLL_MS);
-  if (typeof first.unref === "function") first.unref();
-  feishuPollTimer = setInterval(() => { refreshFeishuRows({ force: true }); }, FEISHU_POLL_MS);
-  if (typeof feishuPollTimer.unref === "function") feishuPollTimer.unref();
+  const arm = (delayMs) => {
+    feishuPollTimer = setTimeout(() => {
+      refreshFeishuRows({ force: true });
+      arm(feishuPollIntervalMs());
+    }, delayMs);
+    if (typeof feishuPollTimer.unref === "function") feishuPollTimer.unref();
+  };
+  arm(FEISHU_FIRST_POLL_MS);
 }
 
 // A tray-level "something is waiting" marker: flash the icon once on arrival and
@@ -5816,14 +5829,23 @@ function ignoreFeishuMessage(messageIds) {
   for (const id of ids) dropFeishuRow(id, "ignored");
 }
 
+// Read fresh each time: the digest config is the single place these knobs live,
+// and re-reading keeps "edit config, no restart" true for the app side too.
+function feishuConfig() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(FEISHU_CONFIG_PATH, "utf8"));
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
 function feishuFollowUpWorktree() {
   if (process.env.FEISHU_FOLLOWUP_WORKTREE) return process.env.FEISHU_FOLLOWUP_WORKTREE;
-  try {
-    const config = JSON.parse(fs.readFileSync(FEISHU_CONFIG_PATH, "utf8"));
-    if (config && typeof config.followUpWorktree === "string" && config.followUpWorktree.trim()) {
-      return config.followUpWorktree.trim();
-    }
-  } catch {}
+  const config = feishuConfig();
+  if (typeof config.followUpWorktree === "string" && config.followUpWorktree.trim()) {
+    return config.followUpWorktree.trim();
+  }
   return FEISHU_FOLLOWUP_WORKTREE_DEFAULT;
 }
 const FEISHU_CONTEXT_MESSAGES = 40;
@@ -6192,8 +6214,10 @@ function createWindow() {
       // the click only paints them. The only case that fetches is a click before
       // the very first read has ever completed.
       feishuSolo = false;
-      if (feishuStatus === "idle") revealFeishuPanel();
-      else revealFeishuPanel({ cachedOnly: true });
+      // Open with whatever is cached, then refresh behind it: the cost is one
+      // query per click (not a faster timer), and what the user is looking at
+      // catches up within a few seconds.
+      revealFeishuPanel();
     },
     statPath: (p) => fs.promises.stat(p),
     openTerminalAt: (dir) => openTerminalAt(dir),

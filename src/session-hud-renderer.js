@@ -531,9 +531,10 @@ function createFeishuSection(rows, status, total, conversations) {
     if (row && row.chatId && typeof window.sessionHudAPI.followUp === "function") {
       const go = document.createElement("span");
       go.className = "feishu-go";
-      const wrench = document.createElement("i");
-      wrench.className = "wrench";
-      go.appendChild(wrench);
+      const bot = document.createElement("i");
+      bot.className = "feishu-ico";
+      bot.textContent = "🤖";
+      go.appendChild(bot);
       go.title = t("feishuAtmeFollowUp");
       go.setAttribute("role", "button");
       go.addEventListener("click", (event) => {
