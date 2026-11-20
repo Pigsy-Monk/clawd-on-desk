@@ -22,6 +22,9 @@ contextBridge.exposeInMainWorld("sessionHudAPI", {
   focusSession: (sessionId) => ipcRenderer.send("session-hud:focus-session", sessionId),
   openSessionFolder: (sessionId) => ipcRenderer.invoke("session-hud:open-session-folder", sessionId),
   openDashboard: () => ipcRenderer.send("session-hud:open-dashboard"),
+  openLink: (href) => ipcRenderer.send("session-hud:open-link", typeof href === "string" ? href : ""),
+  followUp: (payload) => ipcRenderer.send("session-hud:follow-up", payload && typeof payload === "object" ? payload : {}),
+  ignore: (messageIds) => ipcRenderer.send("session-hud:ignore", Array.isArray(messageIds) ? messageIds : []),
   setPinned: (value) => ipcRenderer.send("session-hud:set-pinned", !!value),
   ackCompletion: (sessionId) => ipcRenderer.invoke("session:ack-completion", sessionId),
   onSessionSnapshot: (cb) => {

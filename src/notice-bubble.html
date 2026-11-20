@@ -277,6 +277,60 @@ body[data-tail="right"] { --gutter-right: 20px; }
   overflow-wrap: anywhere;
 }
 
+/* A list card: one row per item, in the same visual language as the Session
+   HUD rows — a tag chip, who it came from, then the text. Rows are one line
+   each and the text is the only part allowed to ellipsize, so a long message
+   never pushes the attribution out of view. */
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.list-item {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.list-chip {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.14);
+  color: var(--text-main);
+}
+.list-chip[data-kind="决"] { background: rgba(239, 68, 68, 0.22); color: #b91c1c; }
+.list-chip[data-kind="回"] { background: rgba(245, 158, 11, 0.22); color: #b45309; }
+.list-chip[data-kind="知"] { background: rgba(107, 114, 128, 0.18); color: #52525b; }
+.list-who {
+  flex: 0 0 auto;
+  font-weight: 600;
+  color: var(--header-color);
+  white-space: nowrap;
+}
+.list-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--text-main);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.list-note {
+  font-size: 11px;
+  opacity: 0.75;
+}
+@media (prefers-color-scheme: dark) {
+  .list-chip[data-kind="决"] { background: rgba(239, 68, 68, 0.28); color: #fca5a5; }
+  .list-chip[data-kind="回"] { background: rgba(245, 158, 11, 0.28); color: #fcd34d; }
+  .list-chip[data-kind="知"] { background: rgba(255, 255, 255, 0.14); color: #d4d4d8; }
+}
+
 /* The picture an image notice carries: a thumbnail under the words. The
    whole card opens it large (the same window a trend card opens), so the
    thumbnail only has to say what it is, not be readable. */
@@ -1270,6 +1324,43 @@ function replayPose(card) {
 // The card's text block: the level glyph prefixed to whichever line leads, the
 // title, and then either the trend rows or the body. Split out of buildCard so
 // an in-place update can rebuild exactly this and nothing else.
+// One row of a list card: a small tag chip, "who@where", then the text. All
+// three are textContent — a digest carries other people's message text and is
+// never parsed as markup. The text is the part that may be cut off, so it takes
+// the flexible slot and the chip and attribution keep their width.
+function buildListItem(item) {
+  const row = document.createElement("div");
+  row.className = "list-item";
+
+  const tag = item && item.tag ? String(item.tag) : "";
+  if (tag) {
+    const chip = document.createElement("span");
+    chip.className = "list-chip";
+    chip.dataset.kind = tag;
+    chip.textContent = tag;
+    row.appendChild(chip);
+  }
+
+  const who = item && item.who ? String(item.who) : "";
+  const where = item && item.where ? String(item.where) : "";
+  const attribution = who && where ? `${who}@${where}` : (who || where);
+  if (attribution) {
+    const name = document.createElement("span");
+    name.className = "list-who";
+    name.textContent = attribution;
+    row.appendChild(name);
+  }
+
+  const text = item && item.text ? String(item.text) : "";
+  if (text) {
+    const body = document.createElement("span");
+    body.className = "list-text";
+    body.textContent = text;
+    row.appendChild(body);
+  }
+  return row;
+}
+
 function buildCopy(notice, level) {
   const copy = document.createElement("div");
   copy.className = "copy";
@@ -1296,6 +1387,22 @@ function buildCopy(notice, level) {
       const row = buildSeriesRow(series[index], palette[index % palette.length]);
       copy.appendChild(row);
       if (!firstLine) firstLine = row;
+    }
+  } else if (notice && notice.kind === "list" && Array.isArray(notice.items) && notice.items.length) {
+    const list = document.createElement("div");
+    list.className = "list";
+    for (const item of notice.items) {
+      const row = buildListItem(item);
+      list.appendChild(row);
+      if (!firstLine) firstLine = row;
+    }
+    copy.appendChild(list);
+    // A list card may still carry a one-line footnote under its rows.
+    if (body) {
+      const note = document.createElement("div");
+      note.className = "body list-note";
+      note.textContent = body;
+      copy.appendChild(note);
     }
   } else if (body) {
     // Also the fallback for a trend notice that arrived without series data.
@@ -1352,6 +1459,13 @@ function isExpandable(notice) {
   return !!(notice && (notice.kind === "trend" || imageDataOf(notice)));
 }
 
+// The main process decides which cards are sticky (a digest list, say). The
+// renderer only keys off the flag: a sticky card's body click is inert so
+// reading it cannot dismiss it.
+function isStickyNotice(notice) {
+  return !!(notice && notice.sticky === true);
+}
+
 // A ✓ that pops in the card's top-right corner for a moment after a copy. A
 // glyph rather than a word, so it needs no translation.
 const COPIED_MARK_MS = 1100;
@@ -1378,6 +1492,7 @@ function buildCard(notice) {
   card.dataset.kind = notice && notice.kind === "trend" ? "trend" : "text";
   card.dataset.expandable = isExpandable(notice) ? "true" : "false";
   card.dataset.pose = isPoseNotice(notice) ? "true" : "false";
+  card.dataset.sticky = isStickyNotice(notice) ? "true" : "false";
 
   const bar = document.createElement("div");
   bar.className = "level-bar";
@@ -1403,6 +1518,10 @@ function buildCard(notice) {
     if (!id) return;
     if (card.dataset.pose === "true") replayPose(card);
     else if (card.dataset.expandable === "true") window.noticeBubbleAPI.expand(id);
+    // A sticky card is a list the user is reading. Letting the same click that
+    // inspects it also destroy it is how a digest disappears before it is read;
+    // × and ttl remain the ways out.
+    else if (card.dataset.sticky === "true") return;
     else window.noticeBubbleAPI.dismiss(id);
   });
 
@@ -1459,6 +1578,7 @@ function updateCard(element, notice) {
   element.dataset.kind = notice && notice.kind === "trend" ? "trend" : "text";
   element.dataset.expandable = isExpandable(notice) ? "true" : "false";
   element.dataset.pose = isPoseNotice(notice) ? "true" : "false";
+  element.dataset.sticky = isStickyNotice(notice) ? "true" : "false";
   const copy = element.querySelector(".copy");
   if (copy) copy.replaceWith(buildCopy(notice, level));
 }
@@ -1951,6 +2071,7 @@ function buildStretchCard() {
   card.dataset.kind = "stretch";
   card.dataset.expandable = "false";
   card.dataset.pose = "false";
+  card.dataset.sticky = "false";
   const bar = document.createElement("div");
   bar.className = "level-bar";
   const copy = document.createElement("div");

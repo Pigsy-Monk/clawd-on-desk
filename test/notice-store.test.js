@@ -748,6 +748,29 @@ describe("notice store — expiry paused during a stretch break", () => {
   });
 });
 
+describe("notice store — sticky cards", () => {
+  it("is off unless the caller says the literal true", () => {
+    const store = makeStore();
+    for (const value of [undefined, null, false, "true", 1, "yes", {}]) {
+      const { notice } = store.add({ title: `s-${String(value)}`, sticky: value });
+      assert.strictEqual(notice.sticky, false, `sticky=${String(value)}`);
+    }
+  });
+
+  it("keeps an explicit true so a list card cannot be click-dismissed", () => {
+    const store = makeStore();
+    const { notice } = store.add({ title: "digest", sticky: true });
+    assert.strictEqual(notice.sticky, true);
+  });
+
+  it("a keyed replace takes the new sticky value both ways", () => {
+    const store = makeStore();
+    store.add({ key: "k", title: "one", sticky: true });
+    const { notice } = store.add({ key: "k", title: "two", sticky: false });
+    assert.strictEqual(notice.sticky, false);
+  });
+});
+
 describe("notice store — presentation", () => {
   it("defaults to the pet's bubble", () => {
     const store = makeStore();

@@ -450,6 +450,147 @@ function createPinButton(pinned) {
   return btn;
 }
 
+// Feishu digest rows, shown above the session rows. Each row is one message the
+// user can open in Feishu; a row without a usable link is still worth reading,
+// so it renders as plain text rather than disappearing.
+const FEISHU_STATUS_KEY = {
+  empty: "feishuAtmeNoUnread",
+  failed: "feishuAtmeFailed",
+  missing: "feishuAtmeMissing",
+};
+
+// How many rows the panel shows. The digest sends more than this so a row that
+// is ignored or handed to an agent is replaced immediately instead of waiting
+// for the next poll.
+const FEISHU_VISIBLE_ROWS = 8;
+
+function createFeishuSection(rows, status, total, conversations) {
+  const section = document.createElement("div");
+  section.className = "feishu";
+
+  const header = document.createElement("div");
+  header.className = "feishu-header";
+  const count = Number.isInteger(total) && total > 0 ? total : rows.length;
+  header.textContent = count > 0 ? `${t("feishuAtme")} · ${count}` : t("feishuAtme");
+  section.appendChild(header);
+
+  // No rows is a normal answer, not a blank panel: say which it is so the user
+  // can tell "nobody wrote to me" from "the read failed".
+  const statusRow = !rows.length && FEISHU_STATUS_KEY[status]
+    ? [{ tag: "", who: "", where: "", text: t(FEISHU_STATUS_KEY[status]), href: "" }]
+    : rows;
+
+  const visible = statusRow.slice(0, FEISHU_VISIBLE_ROWS);
+  for (const row of visible) {
+    const item = document.createElement("div");
+    item.className = row && row.href ? "row feishu-row" : "row feishu-row row-unfocusable";
+
+    if (row && row.tag) {
+      const chip = document.createElement("span");
+      chip.className = "feishu-chip";
+      chip.dataset.kind = row.tag;
+      chip.textContent = row.tag;
+      item.appendChild(chip);
+    }
+
+    const who = row && row.who ? String(row.who) : "";
+    const where = row && row.where ? String(row.where) : "";
+    if (who || where) {
+      const name = document.createElement("span");
+      name.className = "feishu-who";
+      name.textContent = who && where ? `${who}@${where}` : (who || where);
+      item.appendChild(name);
+    }
+
+    const text = document.createElement("span");
+    text.className = "feishu-text";
+    text.textContent = row && row.text ? String(row.text) : "";
+    item.appendChild(text);
+
+    // One row per conversation: say how many messages it stands for.
+    if (row && Number.isInteger(row.count) && row.count > 1) {
+      const many = document.createElement("span");
+      many.className = "feishu-count";
+      many.textContent = `×${row.count}`;
+      item.appendChild(many);
+    }
+
+    if (row && row.href) {
+      // No title attribute: hovering used to print the raw applink URL, which
+      // tells the reader nothing — the click already opens that message.
+      item.addEventListener("click", () => {
+        if (typeof window.sessionHudAPI.openLink === "function") {
+          window.sessionHudAPI.openLink(row.href);
+        }
+      });
+    }
+
+    // The follow-up affordance: a hand-off to a real Claude session that reads
+    // this conversation and helps deal with it. It sits at the end of the row so
+    // the row itself keeps its "open in Feishu" meaning.
+    if (row && row.chatId && typeof window.sessionHudAPI.followUp === "function") {
+      const go = document.createElement("span");
+      go.className = "feishu-go";
+      const wrench = document.createElement("i");
+      wrench.className = "wrench";
+      go.appendChild(wrench);
+      go.title = t("feishuAtmeFollowUp");
+      go.setAttribute("role", "button");
+      go.addEventListener("click", (event) => {
+        event.stopPropagation();
+        go.replaceChildren(document.createTextNode("…"));
+        // Handed off: the row leaves the panel this round, like an ignore.
+        item.remove();
+        window.sessionHudAPI.followUp({
+          chatId: row.chatId,
+          messageId: row.messageId,
+          messageIds: row.messageIds || [],
+          who: row.who,
+          where: row.where,
+          text: row.text,
+        });
+      });
+      item.appendChild(go);
+    }
+
+    // Ignore: drop this message from the panel without touching Feishu. It stays
+    // ignored across refreshes and restarts, so a handled item cannot come back
+    // and a noisy one stops taking a row.
+    if (row && row.messageId && typeof window.sessionHudAPI.ignore === "function") {
+      const skip = document.createElement("span");
+      skip.className = "feishu-skip";
+      // A single short dash: ignoring is quiet housekeeping, not an error.
+      const dash = document.createElement("i");
+      dash.className = "dash";
+      skip.appendChild(dash);
+      skip.title = t("feishuAtmeIgnore");
+      skip.setAttribute("role", "button");
+      skip.addEventListener("click", (event) => {
+        event.stopPropagation();
+        item.remove();
+        window.sessionHudAPI.ignore(row.messageIds && row.messageIds.length
+          ? row.messageIds
+          : [row.messageId]);
+      });
+      item.appendChild(skip);
+    }
+    section.appendChild(item);
+  }
+
+  // Only the overflow count is shown; the rows themselves stay in the snapshot
+  // so ignoring one can reveal the next without a round trip.
+  // Count from the true total, not from the rows in hand: 38 unread with 30 rows
+  // fetched is still "30 more", and the panel must say so.
+  const hidden = Math.max(0, conversations - visible.length);
+  if (hidden > 0) {
+    const more = document.createElement("div");
+    more.className = "feishu-more";
+    more.textContent = `…另有 ${hidden} 个会话`;
+    section.appendChild(more);
+  }
+  return section;
+}
+
 function render() {
   const sessions = orderedHudSessions(snapshot);
   const currentIds = new Set(sessions.map((session) => session.id));
@@ -464,8 +605,16 @@ function render() {
   updateUnread(sessions);
   hudEl.replaceChildren();
   hudEl.classList.add("has-pin");
-  // The HUD shows sessions only; account quota now lives in the pet-attached
-  // quota ring window (quota-ring.html).
+  // Account quota lives in the pet-attached quota ring window (quota-ring.html).
+  const feishuRows = Array.isArray(snapshot.feishuRows) ? snapshot.feishuRows : [];
+  const feishuStatus = typeof snapshot.feishuStatus === "string" ? snapshot.feishuStatus : "";
+  if (feishuRows.length || FEISHU_STATUS_KEY[feishuStatus]) {
+    hudEl.appendChild(createFeishuSection(feishuRows, feishuStatus, snapshot.feishuTotal, snapshot.feishuConversations || feishuRows.length));
+  }
+  // A Feishu-only panel (tray / context menu) stops here: the digest is the
+  // whole point of that view, and mixing in agent sessions made it read as
+  // "these are Feishu messages" for rows that were not.
+  if (snapshot.feishuSolo === true) return;
   if (!sessions.length) return;
 
   const now = Date.now();

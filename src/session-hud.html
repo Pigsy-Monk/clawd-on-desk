@@ -113,6 +113,133 @@ body { padding: 2px 3px 8px; }
   cursor: default;
 }
 
+/* Feishu digest section, above the session rows. Same row rhythm as a session
+   row so the panel reads as one list; the header is the only extra line. */
+.feishu {
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 4px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.10);
+}
+@media (prefers-color-scheme: dark) {
+  .feishu { border-bottom-color: rgba(255, 255, 255, 0.12); }
+}
+.feishu-header {
+  height: 20px;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  opacity: 0.6;
+}
+.feishu-row {
+  gap: 6px;
+}
+.feishu-count {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 600;
+  opacity: 0.6;
+  padding-left: 2px;
+}
+.feishu-more {
+  padding: 0 10px;
+  font-size: 10px;
+  opacity: 0.55;
+}
+.feishu-chip {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 3px;
+  background: rgba(107, 114, 128, 0.13);
+  color: #52525b;
+}
+.feishu-chip[data-kind="决"] { background: rgba(239, 68, 68, 0.13); color: #dc2626; }
+.feishu-chip[data-kind="回"] { background: rgba(245, 158, 11, 0.15); color: #b45309; }
+.feishu-who {
+  flex: 0 0 auto;
+  max-width: 45%;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.feishu-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  opacity: 0.85;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Hand-off to a Claude session. Small and quiet: the row's main action is still
+   "open in Feishu", and this must not compete with it for the click. */
+.feishu-go {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  background: transparent;
+  color: #286856;
+}
+@media (prefers-color-scheme: dark) {
+  .feishu-go { color: #9edac6; }
+}
+/* The chip is painted behind the wrench so the icon itself stays small: a solid
+   block with a full-size wrench read as "too full" in the real HUD. */
+.feishu-go::before {
+  content: "";
+  position: absolute;
+  inset: 2px;
+  border-radius: 5px;
+  background: #dcebe4;
+}
+@media (prefers-color-scheme: dark) {
+  .feishu-go::before { background: #30483e; }
+}
+.feishu-go:hover::before { filter: brightness(0.96); }
+/* The wrench is drawn, not an emoji, so it takes the chip's colour. */
+.wrench {
+  position: relative;
+  display: block;
+  width: 12px;
+  height: 12px;
+  background: currentColor;
+  clip-path: polygon(94% 12%, 94% 37%, 82% 52%, 65% 55%, 54% 51%, 22% 92%, 12% 97%, 3% 90%, 3% 81%, 45% 41%, 44% 25%, 53% 10%, 67% 4%, 79% 3%, 63% 20%, 66% 32%, 78% 34%);
+}
+/* Ignore is housekeeping: a plain neutral dash, visible but never competing. */
+.feishu-skip {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: #717777;
+}
+@media (prefers-color-scheme: dark) {
+  .feishu-skip { color: #adb3b1; }
+}
+.feishu-skip:hover { color: inherit; }
+.dash {
+  display: block;
+  width: 12px;
+  height: 2px;
+  background: currentColor;
+  border-radius: 2px;
+}
+
 .row:hover {
   background: rgba(0, 0, 0, 0.06);
 }

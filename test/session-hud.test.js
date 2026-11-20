@@ -583,16 +583,20 @@ describe("session HUD v5 three-state runtime contracts (source-level)", () => {
     "utf8"
   );
 
-  it("revealFromPet seeds visibleHoldUntil with HIDE_GRACE_MS (HIGH 3 fix)", () => {
-    // Inside revealFromPet, after setting clickRevealed, must seed hold.
-    const revealFn = src.match(/function revealFromPet\(\)\s*\{[\s\S]*?\n  \}/);
-    assert.ok(revealFn, "revealFromPet function missing");
+  it("revealFromPet seeds visibleHoldUntil from its hold (HIGH 3 fix)", () => {
+    // Inside revealFromPet, after setting clickRevealed, must seed hold. The hold
+    // defaults to HIDE_GRACE_MS but a caller that has to fetch something can ask
+    // for longer, so the seed is the resolved hold, not the bare constant.
     assert.ok(
-      /visibleHoldUntil\s*=\s*Date\.now\(\)\s*\+\s*HIDE_GRACE_MS/.test(revealFn[0]),
-      "revealFromPet must seed visibleHoldUntil = Date.now() + HIDE_GRACE_MS"
+      src.includes("function revealFromPet(holdMs)"),
+      "revealFromPet must accept an optional hold"
     );
     assert.ok(
-      /clickRevealed\s*=\s*true/.test(revealFn[0]),
+      src.includes("visibleHoldUntil = Date.now() + hold"),
+      "revealFromPet must seed visibleHoldUntil from its hold"
+    );
+    assert.ok(
+      src.includes("clickRevealed = true"),
       "revealFromPet must set clickRevealed=true"
     );
   });

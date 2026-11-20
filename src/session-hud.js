@@ -69,6 +69,7 @@ function evaluateBaseEligible({
   miniTransitioning,
   showQuota,
   hiddenQuotaProviders,
+  hasFeishuRows = false,
 }) {
   if (!snapshot) return false;
   if (petHidden) return false;
@@ -78,7 +79,11 @@ function evaluateBaseEligible({
   // one being eligible reveals the floating UI on a pet click — so the ring can
   // still be checked ("a remote's quota before starting work") even with the
   // Session HUD turned off.
-  const hudEligible = sessionHudEnabled !== false && snapshotHasVisibleSessions(snapshot);
+  // A Feishu digest is worth a click on its own: with no live session and no
+  // quota coin, the panel would otherwise refuse to open and the rows would be
+  // unreachable.
+  const hudEligible = sessionHudEnabled !== false
+    && (snapshotHasVisibleSessions(snapshot) || hasFeishuRows === true);
   const ringEligible = countQuotaCoins(snapshot, showQuota, hiddenQuotaProviders) > 0;
   return hudEligible || ringEligible;
 }
@@ -347,6 +352,7 @@ module.exports = function initSessionHud(ctx) {
       miniTransitioning: getMiniTransitioning(),
       showQuota: ctx.sessionHudShowQuota !== false,
       hiddenQuotaProviders: ctx.quotaRingHiddenProviders,
+      hasFeishuRows: feishuSectionRows() > 0,
     });
   }
 
@@ -413,10 +419,16 @@ module.exports = function initSessionHud(ctx) {
     // real window, so the cursor "leaves" while still visually over it.
     const hudEnabled = ctx.sessionHudEnabled !== false;
     const hasSessions = snapshotHasVisibleSessions(snapshot);
+    // The Feishu section is part of the real window, so it is part of the hot
+    // zone: leaving it out makes the cursor "leave" while still over the rows
+    // and the panel closes under the pointer.
+    const feishuRowsHeight = feishuSectionRows();
     let contentBounds = null;
-    if (hudEnabled && hasSessions) {
-      const layout = computeHudLayout(snapshot, { showStateLabels: ctx.sessionHudShowStateLabels !== false });
-      const height = computeHudHeight(layout.rowCount);
+    if (hudEnabled && (hasSessions || feishuRowsHeight > 0)) {
+      const layout = feishuSolo()
+        ? { rowCount: 0 }
+        : computeHudLayout(snapshot, { showStateLabels: ctx.sessionHudShowStateLabels !== false });
+      const height = computeHudHeight(layout.rowCount + feishuRowsHeight);
       const computed = computeSessionHudBounds({ hitRect, anchorRect, workArea, width, height, scale, widthScale });
       contentBounds = computed && computed.contentBounds;
     }
@@ -561,8 +573,12 @@ module.exports = function initSessionHud(ctx) {
     }
   }
 
-  // Public API: user clicked the pet to reveal HUD.
-  function revealFromPet() {
+  // Public API: user clicked the pet to reveal HUD. `holdMs` keeps it up for
+  // longer than the click-tolerance grace — a caller that has to go and fetch
+  // something (a Feishu digest takes seconds) should not have the panel vanish
+  // before the content arrives.
+  function revealFromPet(holdMs) {
+    const hold = Number.isFinite(holdMs) && holdMs > 0 ? holdMs : HIDE_GRACE_MS;
     // Quota can expire while both overlay windows are hidden and no session
     // event arrives. Re-read before deciding eligibility so a stale cached
     // snapshot cannot resurrect a dead Orbit coin.
@@ -570,12 +586,12 @@ module.exports = function initSessionHud(ctx) {
     if (!baseEligible(latestSnapshot)) return;
     if (ctx.sessionHudPinned === true) return;     // pinned already always-show
     if (clickRevealed) {
-      // Already revealed — refresh grace as a click tolerance.
-      visibleHoldUntil = Date.now() + HIDE_GRACE_MS;
+      // Already revealed — refresh the grace, never shorten what is left.
+      visibleHoldUntil = Math.max(visibleHoldUntil || 0, Date.now() + hold);
       return;
     }
     clickRevealed = true;
-    visibleHoldUntil = Date.now() + HIDE_GRACE_MS;  // seed
+    visibleHoldUntil = Date.now() + hold;  // seed
     syncSessionHud(latestSnapshot, { sendSnapshot: true });
     startAutoHidePoll();
   }
@@ -624,6 +640,13 @@ module.exports = function initSessionHud(ctx) {
       hudShowContextUsage: ctx.sessionHudShowContextUsage !== false,
       hudShowQuota: ctx.sessionHudShowQuota !== false,
       hudPinned: ctx.sessionHudPinned === true,
+      feishuRows: typeof ctx.getFeishuRows === "function" ? ctx.getFeishuRows() : [],
+      feishuStatus: typeof ctx.getFeishuStatus === "function" ? ctx.getFeishuStatus() : "idle",
+      feishuSolo: feishuSolo(),
+      feishuTotal: typeof ctx.getFeishuTotal === "function" ? ctx.getFeishuTotal() : 0,
+      feishuConversations: typeof ctx.getFeishuConversations === "function"
+        ? ctx.getFeishuConversations()
+        : 0,
     });
   }
 
@@ -847,6 +870,32 @@ module.exports = function initSessionHud(ctx) {
     scheduleHiddenDestroy("hud");
   }
 
+  // Rows the Feishu section contributes: one header plus one per row, and
+  // nothing at all when there is no digest to show.
+  // Right-click "Feishu @me" shows the digest on its own; a pet click keeps the
+  // usual panel (sessions included).
+  // Must match the renderer's cap.
+  const FEISHU_VISIBLE_ROWS = 8;
+
+  function feishuSolo() {
+    return typeof ctx.getFeishuSolo === "function" && ctx.getFeishuSolo() === true;
+  }
+
+  function feishuSectionRows() {
+    const rows = typeof ctx.getFeishuRows === "function" ? ctx.getFeishuRows() : [];
+    const count = Array.isArray(rows) ? rows.length : 0;
+    if (count > 0) {
+      // Only the rows the panel actually draws count toward its height, plus one
+      // line for "…另有 N 条". Sizing from the fetched count made the panel grow
+      // with the digest and resize on every refresh.
+      return Math.min(count, FEISHU_VISIBLE_ROWS) + 1 + (count > FEISHU_VISIBLE_ROWS ? 1 : 0);
+    }
+    // An empty or failed read still deserves its header plus one line saying so:
+    // otherwise "nobody wrote to me" and "this is broken" look identical.
+    const status = typeof ctx.getFeishuStatus === "function" ? ctx.getFeishuStatus() : "idle";
+    return status === "empty" || status === "failed" || status === "missing" ? 2 : 0;
+  }
+
   function computeBounds(snapshot, scale = getTextScale()) {
     if (!ctx.win || ctx.win.isDestroyed()) return null;
     const petBounds = typeof ctx.getPetWindowBounds === "function" ? ctx.getPetWindowBounds() : null;
@@ -862,8 +911,13 @@ module.exports = function initSessionHud(ctx) {
     const workArea = typeof ctx.getNearestWorkArea === "function"
       ? ctx.getNearestWorkArea(cx, cy)
       : { x: 0, y: 0, width: 1280, height: 800 };
-    const layout = computeHudLayout(snapshot, { showStateLabels: ctx.sessionHudShowStateLabels !== false });
-    const height = computeHudHeight(layout.rowCount);
+    const layout = feishuSolo()
+      ? { rowCount: 0 }
+      : computeHudLayout(snapshot, { showStateLabels: ctx.sessionHudShowStateLabels !== false });
+    // Feishu rows sit above the session rows with a one-row header, so the panel
+    // has to grow by that much or the extra rows would be clipped.
+    const feishuHeightRows = feishuSectionRows();
+    const height = computeHudHeight(layout.rowCount + feishuHeightRows);
     const width = getHudWidth(
       ctx.sessionHudShowElapsed !== false,
       ctx.sessionHudShowStateLabels !== false,
@@ -925,7 +979,12 @@ module.exports = function initSessionHud(ctx) {
     // the quota ring) ──
     const hudEnabled = ctx.sessionHudEnabled !== false;
     const hasSessions = snapshotHasVisibleSessions(snapshot);
-    const hudComputed = show && hudEnabled && hasSessions ? computeBounds(snapshot, scale) : null;
+    // A Feishu digest is worth showing on its own: a click with no live session
+    // still has something to say.
+    const hasFeishu = feishuSectionRows() > 0;
+    const hudComputed = show && hudEnabled && (hasSessions || hasFeishu)
+      ? computeBounds(snapshot, scale)
+      : null;
     if (!hudComputed) {
       hideSessionHud();
     } else {

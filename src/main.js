@@ -155,6 +155,7 @@ const { createTrayBalloonOwner } = require("./tray-balloon-owner");
 const initUpdateBubble = require("./update-bubble");
 const { registerUpdateBubbleIpc } = initUpdateBubble;
 const { createNoticeStore } = require("./notice-store");
+const { createFeishuAtmeCommand, DEFAULT_SCRIPT_PATH } = require("./feishu-atme-command");
 const { createNoticeHistory } = require("./notice-history");
 const initNoticeBubble = require("./notice-bubble");
 const { registerNoticeBubbleIpc } = initNoticeBubble;
@@ -3311,6 +3312,16 @@ const _tutorial = require("./tutorial")({
 const _ringGeom = require("./quota-ring-geometry");
 
 const _sessionHud = require("./session-hud")({
+  // Rows the Feishu digest last produced. Empty until the user clicks the pet,
+  // which is the only trigger (see src/feishu-atme-command.js).
+  getFeishuRows: () => feishuRows,
+  getFeishuStatus: () => feishuStatus,
+  // 真实未读总数（可能大于面板显示的行数）
+  getFeishuTotal: () => feishuTotal,
+  getFeishuConversations: () => feishuConversations,
+  // The right-click entry asks for the digest alone; a pet click wants the
+  // ordinary panel with sessions under it.
+  getFeishuSolo: () => feishuSolo,
   get win() { return win; },
   get petHidden() { return petWindowRuntime.isPetEffectivelyHidden(); },
   get sessionHudEnabled() { return sessionHudEnabled; },
@@ -4902,6 +4913,169 @@ function showResumeInput(t) {
   });
 }
 
+// Manual-only Feishu "@me" digest runner. Constructed once so its in-flight
+// latch survives a second click; it schedules nothing. Diagnostics go to the
+// session log rather than a notice body, because the skill's stdout carries
+// other people's message text.
+const feishuAtmeCommand = createFeishuAtmeCommand({
+  debugLog: (msg) => sessionLog(msg),
+});
+
+// The digest is a manual read: a pet click refreshes it, and clicks closer
+// together than this reuse what is already on screen instead of asking Feishu
+// again.
+const FEISHU_REFRESH_MIN_MS = 180_000;
+let feishuRows = [];
+// "idle" until the first read. The panel shows the empty/failed states too, so
+// "nobody wrote to me" is distinguishable from "the feature is broken".
+let feishuStatus = "idle";
+// The real unread count, not the row count: rows are capped at what fits in the
+// panel, so comparing rows would stop flashing as soon as there are more than
+// the cap.
+let feishuTotal = 0;
+// Conversations, not messages: the rows are one-per-chat, so the overflow count
+// has to be in the same unit.
+let feishuConversations = 0;
+let feishuSolo = false;
+let feishuRowsAt = 0;
+let feishuRefreshInFlight = false;
+
+// Show the pet's click panel and make sure it ends up carrying the Feishu rows.
+// The digest takes a few seconds, so the panel opens immediately with whatever
+// is cached and is re-synced (height included) when the rows land — a snapshot
+// alone would leave the new section clipped by the old window height.
+// Long enough to read a digest and click a row. Without it the panel would fall
+// back to the 0.5s click tolerance and vanish the moment the cursor left it.
+const FEISHU_PANEL_HOLD_MS = 20000;
+
+// After a row opens Feishu the user is probably reading that message right now.
+// One delayed re-read turns "handled" into "gone" within a minute and a half
+// instead of waiting for the next 15-minute poll.
+const FEISHU_REREAD_AFTER_OPEN_MS = 90_000;
+let feishuRereadTimer = null;
+
+function scheduleFeishuReread() {
+  if (feishuRereadTimer) return;
+  feishuRereadTimer = setTimeout(() => {
+    feishuRereadTimer = null;
+    refreshFeishuRows({ force: true });
+  }, FEISHU_REREAD_AFTER_OPEN_MS);
+  if (typeof feishuRereadTimer.unref === "function") feishuRereadTimer.unref();
+}
+
+function revealFeishuPanel(options = {}) {
+  setFeishuTrayHint(0);
+  const openNow = () => {
+    if (_sessionHud && typeof _sessionHud.revealFromPet === "function") {
+      _sessionHud.revealFromPet(FEISHU_PANEL_HOLD_MS);
+    }
+  };
+  openNow();
+  if (options.cachedOnly) return null;
+  const pending = refreshFeishuRows(options);
+  if (pending && typeof pending.then === "function") {
+    pending.then(() => {
+      if (typeof syncSessionHudVisibility === "function" && _state) {
+        syncSessionHudVisibility(_state.buildSessionSnapshot(), { sendSnapshot: true });
+      }
+      {
+        const w = _sessionHud && typeof _sessionHud.getWindow === "function"
+          ? _sessionHud.getWindow()
+          : null;
+        sessionLog(`feishu-atme rows=${feishuRows.length} hud=${
+          w && !w.isDestroyed() ? `visible:${w.isVisible()} ${w.getBounds().width}x${w.getBounds().height}` : "none"
+        }`);
+      }
+      // Extend (or re-open) the panel now that it has something new to say.
+      openNow();
+    });
+  }
+  return pending;
+}
+
+// Background warm-up. The digest is slow (~5s of Feishu round trips), so the
+// panel is only instant if the rows are already in hand when the user clicks.
+//
+// This is the one place the app reads Feishu on a timer. It is a deliberate,
+// user-requested exception to the "no periodic external pulls" stance recorded
+// in kimi-quota-runtime.js: the read is the user's own account, it is cheap
+// (lark-cli only, no model unless a message is new), and it exists purely to
+// keep the click instant. Nothing else in this feature schedules itself.
+const FEISHU_POLL_MS = 15 * 60 * 1000;
+const FEISHU_FIRST_POLL_MS = 20 * 1000;
+let feishuPollTimer = null;
+
+function startFeishuPolling() {
+  if (feishuPollTimer) return;
+  const first = setTimeout(() => { refreshFeishuRows({ force: true }); }, FEISHU_FIRST_POLL_MS);
+  if (typeof first.unref === "function") first.unref();
+  feishuPollTimer = setInterval(() => { refreshFeishuRows({ force: true }); }, FEISHU_POLL_MS);
+  if (typeof feishuPollTimer.unref === "function") feishuPollTimer.unref();
+}
+
+// A tray-level "something is waiting" marker: flash the icon once on arrival and
+// keep the count in the tooltip until the panel is opened.
+function setFeishuTrayHint(count) {
+  const tray = _menu && _menu.getTray ? _menu.getTray() : null;
+  if (!tray) return;
+  try {
+    tray.setToolTip(count > 0 ? `Clawd — 飞书 @我 ${count} 条` : "Clawd");
+  } catch {}
+}
+
+function refreshFeishuRows(options = {}) {
+  const force = options.force === true;
+  if (feishuRefreshInFlight) return Promise.resolve(null);
+  if (!force && Date.now() - feishuRowsAt < FEISHU_REFRESH_MIN_MS) {
+    return Promise.resolve(null);
+  }
+  feishuRefreshInFlight = true;
+  const previousTotal = feishuTotal;
+  return feishuAtmeCommand.run()
+    .then((result) => {
+      feishuRefreshInFlight = false;
+      feishuRowsAt = Date.now();
+      sessionLog(`feishu-atme run status=${result.status} rows=${(result.rows || []).length}`);
+      if (result.status === "ready") {
+        const kept = result.rows.filter((row) => !feishuIgnored.has(row.messageId));
+        const dropped = result.rows.length - kept.length;
+        feishuRows = kept;
+        const rawTotal = Number.isInteger(result.total) ? result.total : result.rows.length;
+        feishuTotal = Math.max(0, rawTotal - dropped);
+        feishuConversations = Number.isInteger(result.conversations)
+          ? result.conversations
+          : feishuRows.length;
+        feishuStatus = feishuRows.length ? "ready" : "empty";
+      } else if (result.status === "empty") {
+        feishuRows = [];
+        feishuTotal = 0;
+        feishuConversations = 0;
+        feishuStatus = "empty";
+      } else if (result.status === "missing" || result.status === "failed") {
+        // Keep the last good rows, but say that this read did not land.
+        feishuStatus = result.status;
+      }
+      // A failure keeps the previous rows: a transient error should not blank a
+      // list the user is looking at.
+      if (typeof broadcastSessionHudSnapshot === "function") {
+        broadcastSessionHudSnapshot();
+      }
+      setFeishuTrayHint(feishuTotal);
+      if (feishuTotal > previousTotal && feishuTotal > 0) {
+        // Respect DND and the user's own flash preference: flashTaskbar already
+        // gates on both.
+        sessionLog(`feishu-atme new ${previousTotal}->${feishuTotal} flash`);
+        if (typeof flashTaskbar === "function") flashTaskbar();
+      }
+      return result;
+    })
+    .catch((err) => {
+      feishuRefreshInFlight = false;
+      sessionLog(`feishu-atme refresh failed ${err && err.message ? err.message : err}`);
+      return null;
+    });
+}
+
 const _menuCtx = {
   get win() { return win; },
   get sessions() { return sessions; },
@@ -4991,6 +5165,12 @@ const _menuCtx = {
   checkForUpdates: (...args) => checkForUpdates(...args),
   getUpdateMenuItem: () => getUpdateMenuItem(),
   openDashboard: () => showDashboard(),
+  // Manual Feishu "@me" check. Refreshes the rows the pet's click panel shows
+  // and opens that panel; the command holds no timer of its own.
+  runFeishuAtme: () => {
+    feishuSolo = true;
+    revealFeishuPanel({ force: true });
+  },
   launchClaudeSession: (mode, cwd, sessionId) => launchClaudeSession(mode, cwd, sessionId),
   newSessionWithFolder: async (t) => {
     const parent = win && !win.isDestroyed() ? win : null;
@@ -5557,8 +5737,231 @@ const sessionHistoryRuntime = createSessionHistoryRuntime({
   ),
 });
 
+const FEISHU_APP_LINK_HOST = "applink.feishu.cn";
+const REG_SEP = String.fromCharCode(92);
+
+// Opening an applink through the OS lands in a browser first ("open Feishu?"),
+// and its feishu:// scheme drops the chat route on the floor. The client’s own
+// command line does neither: the registry handler is literally
+// `Feishu.exe -- --open-url="<url>"`, so handing it that argv opens the chat
+// directly — no browser, no confirmation dialog.
+let cachedFeishuExe;
+function feishuExePath() {
+  if (cachedFeishuExe !== undefined) return cachedFeishuExe;
+  cachedFeishuExe = null;
+  try {
+    const { execFileSync } = require("node:child_process");
+    for (const hive of ["HKCU", "HKLM"]) {
+      const key = [hive, "Software", "Classes", "feishu", "shell", "open", "command"].join(REG_SEP);
+      let out;
+      try {
+        out = execFileSync("reg", ["query", key, "/ve"], { encoding: "utf8", windowsHide: true });
+      } catch { continue; }
+      const row = out.split(String.fromCharCode(10)).map((line) => line.trim())
+        .find((line) => line.includes("REG_SZ"));
+      const found = row ? row.match(/"[^"]*Feishu[.]exe"/i) : null;
+      if (found) { cachedFeishuExe = found[0].slice(1, -1); break; }
+    }
+  } catch {}
+  return cachedFeishuExe;
+}
+
+function openInFeishuClient(href) {
+  const exe = feishuExePath();
+  if (!exe) return false;
+  try {
+    const { spawn } = require("node:child_process");
+    const child = spawn(exe, ["--", "--open-url=" + href], {
+      detached: true, stdio: "ignore", windowsHide: true,
+    });
+    child.on("error", () => {});
+    child.unref();
+    return true;
+  } catch { return false; }
+}
+
+const FEISHU_CONTEXT_DIR = path.join(require("node:os").homedir(), ".feishu-atme", "context");
+// The context file is read by absolute path, so the agent does not have to run
+// inside it. Orca only launches into a workspace it already knows; a fresh
+// folder is not one (repo add --kind folder reports ok without registering), so
+// this defaults to the user's flt-engine-skills checkout. Override with
+// FEISHU_FOLLOWUP_WORKTREE when a different workspace is wanted.
+const FEISHU_FOLLOWUP_WORKTREE_DEFAULT = "D:/JavaProjects/flt-engine-skills";
+const FEISHU_CONFIG_PATH = path.join(require("node:os").homedir(), ".feishu-atme", "config.json");
+
+// Which workspace the follow-up agent opens in. Read per launch (not cached) so
+// editing config.json takes effect on the next click.
+// Ignored / handled message ids, in memory only: they are dropped when the pet
+// restarts. Nothing is written to disk.
+const feishuIgnored = new Set();
+
+// Shared by "handled" (wrench) and "ignore": the row leaves the panel now. Both
+// are remembered, so neither comes back on the next poll while the message is
+// still unread in Feishu.
+function dropFeishuRow(messageId, reason) {
+  if (!messageId) return;
+  feishuIgnored.add(messageId);
+  const before = feishuRows.length;
+  feishuRows = feishuRows.filter((row) => row.messageId !== messageId);
+  if (feishuRows.length !== before) {
+    feishuTotal = Math.max(0, feishuTotal - (before - feishuRows.length));
+    setFeishuTrayHint(feishuTotal);
+    if (typeof broadcastSessionHudSnapshot === "function") broadcastSessionHudSnapshot();
+  }
+  sessionLog(`feishu-atme ${reason} ${messageId}`);
+}
+
+function ignoreFeishuMessage(messageIds) {
+  const ids = Array.isArray(messageIds) ? messageIds : [messageIds];
+  for (const id of ids) dropFeishuRow(id, "ignored");
+}
+
+function feishuFollowUpWorktree() {
+  if (process.env.FEISHU_FOLLOWUP_WORKTREE) return process.env.FEISHU_FOLLOWUP_WORKTREE;
+  try {
+    const config = JSON.parse(fs.readFileSync(FEISHU_CONFIG_PATH, "utf8"));
+    if (config && typeof config.followUpWorktree === "string" && config.followUpWorktree.trim()) {
+      return config.followUpWorktree.trim();
+    }
+  } catch {}
+  return FEISHU_FOLLOWUP_WORKTREE_DEFAULT;
+}
+const FEISHU_CONTEXT_MESSAGES = 40;
+
+function orcaBinary() {
+  const candidates = [
+    process.env.ORCA_CLI_COMMAND,
+    path.join(process.env.LOCALAPPDATA || "", "Programs", "orca", "resources", "bin", "orca.exe"),
+  ].filter(Boolean);
+  for (const candidate of candidates) {
+    try { if (fs.existsSync(candidate)) return candidate; } catch {}
+  }
+  return "orca";
+}
+
+function oneLine(value, limit) {
+  const LF = String.fromCharCode(10);
+  const CR = String.fromCharCode(13);
+  const text = String(value || "").split(LF).join(" ").split(CR).join(" ").trim();
+  return text.length > limit ? text.slice(0, limit) + "…" : text;
+}
+
+// Pull a chat's recent history and hand it to a fresh Claude session in Orca.
+// The panel's wrench exists for the case the digest cannot answer on its own:
+// "what is this about, and what should I do about it". Sending stays with the
+// user — the prompt forbids the session from posting anything.
+function followUpFeishuChat(payload) {
+  const chatId = typeof payload.chatId === "string" ? payload.chatId.trim() : "";
+  if (!/^oc_[A-Za-z0-9]+$/.test(chatId)) {
+    sessionLog("feishu-atme follow-up rejected: bad chatId");
+    return;
+  }
+  const who = oneLine(payload.who, 40);
+  const where = oneLine(payload.where || "私聊", 40);
+  const focusText = oneLine(payload.text, 200);
+  const LF = String.fromCharCode(10);
+
+  // The context read goes through the skill's own --context mode rather than
+  // calling lark-cli here: on Windows the CLI is an .cmd shim, which Node 24
+  // refuses to execFile, and the python path is already proven (and already
+  // pins UTF-8).
+  const { execFile } = require("node:child_process");
+  const python = process.platform === "win32" ? "python" : "python3";
+  execFile(
+    python,
+    [DEFAULT_SCRIPT_PATH, "--context", chatId, "--context-limit", String(FEISHU_CONTEXT_MESSAGES)],
+    {
+      encoding: "utf8",
+      windowsHide: true,
+      timeout: 60000,
+      env: { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONUTF8: "1" },
+    },
+    (err, stdout) => {
+      if (err) {
+        sessionLog(`feishu-atme follow-up: context read failed ${err.message}`);
+        return;
+      }
+      const context = String(stdout || "").trim();
+      if (!context) {
+        sessionLog("feishu-atme follow-up: empty context");
+        return;
+      }
+      try {
+        fs.mkdirSync(FEISHU_CONTEXT_DIR, { recursive: true });
+        const file = path.join(FEISHU_CONTEXT_DIR, `${chatId}-${Date.now()}.md`);
+        fs.writeFileSync(file, [
+          `# 飞书会话记录（${where}）`,
+          "",
+          `重点消息：${who} — ${focusText}`,
+          "",
+          "## 最近的聊天记录",
+          "",
+          context,
+          "",
+        ].join(LF), "utf8");
+
+        // The prompt forbids posting: this session drafts, it does not speak for
+        // the user.
+        const prompt = [
+          `读 ${file} —— 这是我飞书会话「${where}」最近的聊天记录，重点是 ${who} 发的那条：${focusText}。`,
+          "请：1) 总结这件事的进展、还欠什么；2) 给出我可以怎么回的草稿（中文，简洁）；"
+            + "3) 列出需要我去做的事。**不要发送任何飞书消息**，只产出草稿。",
+        ].join(LF);
+
+        const child = require("node:child_process").spawn(
+          orcaBinary(),
+          ["agent", "launch", "--agent", "claude", "--worktree", `path:${feishuFollowUpWorktree()}`,
+            "--prompt", prompt, "--focus", "--json"],
+          { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] },
+        );
+        let out = "";
+        let errOut = "";
+        if (child.stdout) child.stdout.on("data", (chunk) => { out += chunk; });
+        if (child.stderr) child.stderr.on("data", (chunk) => { errOut += chunk; });
+        child.on("error", (spawnErr) => {
+          sessionLog(`feishu-atme follow-up: orca launch failed ${spawnErr.message}`);
+        });
+        // Handed to an agent: it is being dealt with, so it leaves the panel and
+        // stays gone for this round and the next.
+        const handledIds = Array.isArray(payload.messageIds) && payload.messageIds.length
+          ? payload.messageIds
+          : [payload.messageId];
+        for (const id of handledIds) dropFeishuRow(id, "handled");
+        child.on("close", (code) => {
+          // Silence here is what made a dead button look like a working one: a
+          // selector error arrives on stdout with a non-zero exit, so it is
+          // logged rather than dropped.
+          let ok = false;
+          try { ok = JSON.parse(out).ok === true; } catch {}
+          sessionLog(ok
+            ? `feishu-atme follow-up launched for ${chatId}`
+            : `feishu-atme follow-up failed (${code}) ${oneLine(out || errOut, 200)}`);
+        });
+      } catch (writeErr) {
+        sessionLog(`feishu-atme follow-up: ${writeErr.message}`);
+      }
+    },
+  );
+}
+
 registerSessionIpc({
   ipcMain,
+  // A Feishu digest row's link. The skill only ever hands us URLs the Feishu API
+  // produced, but the string still comes from message content, so the scheme is
+  // re-checked here before the OS browser sees it.
+  followUpFeishuChat: (payload) => followUpFeishuChat(payload),
+  ignoreFeishuMessage: (messageId) => ignoreFeishuMessage(messageId),
+  openExternalLink: (href) => {
+    try {
+      const url = new URL(href);
+      if (url.protocol !== "http:" && url.protocol !== "https:") return;
+      sessionLog(`feishu-atme open ${href}`);
+      // Opening a message usually means it is about to be handled.
+      scheduleFeishuReread();
+      if (url.hostname === FEISHU_APP_LINK_HOST && openInFeishuClient(href)) return;
+      require("electron").shell.openExternal(href);
+    } catch {}
+  },
   getSessionSnapshot: () => _state.buildSessionSnapshot(),
   getI18n: () => getDashboardI18nPayload(),
   getDashboardWebContents: () => _dashboard.getWebContents(),
@@ -5677,6 +6080,7 @@ function createWindow() {
 
   buildContextMenu();
   if (!isMac || showTray) createTray();
+  startFeishuPolling();
   ensureContextMenuOwner();
 
   // ── Create input window (hitWin) — small rect over hitbox, receives all pointer events ──
@@ -5784,9 +6188,12 @@ function createWindow() {
     showDashboard: () => showDashboard(),
     focusSession: (sessionId, options) => focusDashboardSession(sessionId, options),
     revealSessionHud: () => {
-      if (_sessionHud && typeof _sessionHud.revealFromPet === "function") {
-        _sessionHud.revealFromPet();
-      }
+      // A pet click must be instant: the background poll keeps the rows warm, so
+      // the click only paints them. The only case that fetches is a click before
+      // the very first read has ever completed.
+      feishuSolo = false;
+      if (feishuStatus === "idle") revealFeishuPanel();
+      else revealFeishuPanel({ cachedOnly: true });
     },
     statPath: (p) => fs.promises.stat(p),
     openTerminalAt: (dir) => openTerminalAt(dir),
