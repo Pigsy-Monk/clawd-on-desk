@@ -210,13 +210,19 @@ describe("dashboard notices tab", () => {
     const key = await tabs.dispatch("keydown", { key: "ArrowRight" });
     await flush();
     assert.equal(key.defaultPrevented, true);
-    assert.equal(app.el("tabNotices").getAttribute("aria-selected"), "true");
-    assert.equal(app.el("tabNotices").getAttribute("tabindex"), "0");
+    // Three tabs now: sessions → feishu → notices.
+    assert.equal(app.el("tabFeishu").getAttribute("aria-selected"), "true");
+    assert.equal(app.el("tabFeishu").getAttribute("tabindex"), "0");
     assert.equal(app.el("tabSessions").getAttribute("aria-selected"), "false");
     assert.equal(app.el("tabSessions").getAttribute("tabindex"), "-1");
-    assert.equal(app.document.activeElement, app.el("tabNotices"), "focus follows the selection");
-    assert.equal(app.el("noticesPanel").hidden, false);
+    assert.equal(app.document.activeElement, app.el("tabFeishu"), "focus follows the selection");
+    assert.equal(app.el("feishuPanel").hidden, false);
     assert.equal(app.el("content").hidden, true);
+
+    await tabs.dispatch("keydown", { key: "ArrowRight" });
+    await flush();
+    assert.equal(app.el("tabNotices").getAttribute("aria-selected"), "true");
+    assert.equal(app.el("noticesPanel").hidden, false);
 
     await tabs.dispatch("keydown", { key: "Home" });
     assert.equal(app.el("tabSessions").getAttribute("aria-selected"), "true");
@@ -224,7 +230,7 @@ describe("dashboard notices tab", () => {
     await tabs.dispatch("keydown", { key: "End" });
     assert.equal(app.el("tabNotices").getAttribute("aria-selected"), "true");
     await tabs.dispatch("keydown", { key: "ArrowLeft" });
-    assert.equal(app.el("tabSessions").getAttribute("aria-selected"), "true");
+    assert.equal(app.el("tabFeishu").getAttribute("aria-selected"), "true");
     const ignored = await tabs.dispatch("keydown", { key: "ArrowDown" });
     assert.equal(ignored.defaultPrevented, false, "vertical keys stay with the page");
   });

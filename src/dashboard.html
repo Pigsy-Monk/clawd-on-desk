@@ -1122,6 +1122,100 @@ button:disabled {
 
 .notice-time { font-variant-numeric: tabular-nums; }
 
+/* Feishu board: two flat sections, one row per conversation. */
+.feishu-board-heading {
+  margin: 18px 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  opacity: 0.65;
+}
+.feishu-board-heading:first-child { margin-top: 4px; }
+.feishu-board-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 5px 2px;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.14);
+  font-size: 13px;
+}
+.feishu-board-tag {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 5px;
+  border-radius: 3px;
+  background: rgba(127, 127, 127, 0.16);
+}
+.feishu-board-tag[data-kind="决"] { background: rgba(220, 38, 38, 0.14); color: #dc2626; }
+.feishu-board-tag[data-kind="回"] { background: rgba(180, 83, 9, 0.16); color: #b45309; }
+.feishu-board-who {
+  flex: 0 0 auto;
+  max-width: 40%;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.feishu-board-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  opacity: 0.85;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.feishu-board-count {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 0.6;
+}
+.feishu-board-empty {
+  margin: 4px 0 10px;
+  font-size: 12px;
+  opacity: 0.55;
+}
+
+/* Time windows inside an Unread / Read section. One step quieter than the
+   section heading: they organise the rows, they are not another section. */
+.feishu-board-subheading {
+  margin: 10px 0 2px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  opacity: 0.5;
+}
+
+/* A row with a link is a button: it opens that message in Feishu. */
+.feishu-board-row.is-openable { cursor: pointer; }
+.feishu-board-row.is-openable:hover { background: rgba(127, 127, 127, 0.08); }
+.feishu-board-row.is-openable:focus-visible {
+  outline: 2px solid var(--accent, #2383e2);
+  outline-offset: -2px;
+}
+
+.feishu-board-time {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  opacity: 0.5;
+}
+
+/* The hand-off to an agent sits at the end of the row, away from the text, so
+   a click meant for "open in Feishu" does not land on it. */
+.feishu-board-go {
+  flex: 0 0 auto;
+  padding: 0 2px;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.45;
+}
+.feishu-board-go:hover,
+.feishu-board-go:focus-visible { opacity: 1; }
+
 .notice-live {
   padding: 1px 6px;
   border: 1px dashed var(--muted);
@@ -1228,6 +1322,8 @@ button:disabled {
       <div id="dashboardTabs" class="dashboard-tabs" role="tablist" aria-label="Dashboard views" hidden>
         <button type="button" id="tabSessions" class="dashboard-tab" role="tab"
           aria-selected="true" aria-controls="content" tabindex="0">Sessions</button>
+        <button type="button" id="tabFeishu" class="dashboard-tab" role="tab"
+          aria-selected="false" aria-controls="feishuPanel" tabindex="-1">Feishu</button>
         <button type="button" id="tabNotices" class="dashboard-tab" role="tab"
           aria-selected="false" aria-controls="noticesPanel" tabindex="-1">Notices</button>
       </div>
@@ -1236,6 +1332,11 @@ button:disabled {
     <main class="panels">
       <div id="content" class="content" role="tabpanel" aria-labelledby="tabSessions"
         aria-live="polite" data-language-picker-boundary></div>
+      <section id="feishuPanel" class="content notices-panel" role="tabpanel"
+        aria-labelledby="tabFeishu" hidden>
+        <div id="feishuBoardStatus" class="notices-status" role="status" aria-live="polite"></div>
+        <div id="feishuBoardBody"></div>
+      </section>
       <section id="noticesPanel" class="content notices-panel" role="tabpanel"
         aria-labelledby="tabNotices" hidden>
         <div id="noticesStatus" class="notices-status" role="status" aria-live="polite"></div>

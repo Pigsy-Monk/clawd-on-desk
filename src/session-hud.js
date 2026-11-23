@@ -198,6 +198,29 @@ function computeHudHeight(rowCount) {
   return rowCount * HUD_ROW_HEIGHT + HUD_BORDER_Y;
 }
 
+// What the Feishu block really occupies on the page, in rows: a 20px header,
+// the rows themselves, a small "more" line, then 4px padding, a 1px rule and
+// 4px margin (.feishu in session-hud.html). Booking it as plain "n + 1" rows
+// left the window ~14px short and clipped the panel's last line — a session row
+// or the fold row — at the bottom edge.
+const FEISHU_HEADER_PX = 20;
+const FEISHU_MORE_PX = 13;
+const FEISHU_CHROME_PX = FEISHU_HEADER_PX + FEISHU_MORE_PX + 4 + 1 + 4;
+// Must match the renderer's cap (session-hud-renderer.js FEISHU_VISIBLE_ROWS).
+const FEISHU_VISIBLE_ROWS = 8;
+
+function feishuSectionHeightRows(rowCount, status) {
+  const count = Number.isFinite(rowCount) && rowCount > 0 ? rowCount : 0;
+  // No rows is a normal answer for "empty" and friends, and those still draw a
+  // header plus one line saying so: otherwise "nobody wrote to me" and "this is
+  // broken" look identical.
+  const shown = count > 0
+    ? Math.min(count, FEISHU_VISIBLE_ROWS)
+    : (status === "empty" || status === "failed" || status === "missing" ? 1 : 0);
+  if (!shown) return 0;
+  return shown + FEISHU_CHROME_PX / HUD_ROW_HEIGHT;
+}
+
 function computeHudReservedOffset(cardHeight) {
   const h = Number.isFinite(cardHeight) && cardHeight > 0 ? cardHeight : HUD_ROW_HEIGHT;
   return HUD_PET_GAP + h + HUD_WINDOW_SHELL.bottom + BUBBLE_GAP;
@@ -870,30 +893,16 @@ module.exports = function initSessionHud(ctx) {
     scheduleHiddenDestroy("hud");
   }
 
-  // Rows the Feishu section contributes: one header plus one per row, and
-  // nothing at all when there is no digest to show.
   // Right-click "Feishu @me" shows the digest on its own; a pet click keeps the
   // usual panel (sessions included).
-  // Must match the renderer's cap.
-  const FEISHU_VISIBLE_ROWS = 8;
-
   function feishuSolo() {
     return typeof ctx.getFeishuSolo === "function" && ctx.getFeishuSolo() === true;
   }
 
   function feishuSectionRows() {
     const rows = typeof ctx.getFeishuRows === "function" ? ctx.getFeishuRows() : [];
-    const count = Array.isArray(rows) ? rows.length : 0;
-    if (count > 0) {
-      // Only the rows the panel actually draws count toward its height, plus one
-      // line for "…另有 N 条". Sizing from the fetched count made the panel grow
-      // with the digest and resize on every refresh.
-      return Math.min(count, FEISHU_VISIBLE_ROWS) + 1 + (count > FEISHU_VISIBLE_ROWS ? 1 : 0);
-    }
-    // An empty or failed read still deserves its header plus one line saying so:
-    // otherwise "nobody wrote to me" and "this is broken" look identical.
     const status = typeof ctx.getFeishuStatus === "function" ? ctx.getFeishuStatus() : "idle";
-    return status === "empty" || status === "failed" || status === "missing" ? 2 : 0;
+    return feishuSectionHeightRows(Array.isArray(rows) ? rows.length : 0, status);
   }
 
   function computeBounds(snapshot, scale = getTextScale()) {
@@ -1079,6 +1088,7 @@ module.exports.__test = {
   computeHudLayout,
   getHudMaxExpandedRows,
   computeHudHeight,
+  feishuSectionHeightRows,
   countQuotaCoins,
   computeHudReservedOffset,
   isHudSession,

@@ -396,10 +396,16 @@ def group_by_chat(entries: list[tuple[str, dict, str]], text_limit: int) -> list
     order: list[str] = []
     for tag, msg, summary in entries:
         chat_id = msg.get("chat_id") or msg.get("message_id") or ""
+        when = msg.get("create_time") or ""
         if chat_id not in groups:
-            groups[chat_id] = {"tag": tag, "msg": msg, "summary": summary, "ids": []}
+            groups[chat_id] = {"tag": tag, "msg": msg, "summary": summary, "ids": [],
+                               "latest": when}
             order.append(chat_id)
         group = groups[chat_id]
+        # 会话的时间用**最后一条**：面板按时间排的是「这个会话最近有动静」，
+        # 不是代表行这条刚好什么时候发的。
+        if when > group["latest"]:
+            group["latest"] = when
         group["ids"].append(msg.get("message_id") or "")
         if TAG_PRIORITY.get(tag, 9) < TAG_PRIORITY.get(group["tag"], 9):
             group["tag"], group["msg"], group["summary"] = tag, msg, summary
@@ -410,6 +416,7 @@ def group_by_chat(entries: list[tuple[str, dict, str]], text_limit: int) -> list
         item = make_item(group["tag"], group["msg"], text_limit, group["summary"])
         item["count"] = len(group["ids"])
         item["messageIds"] = group["ids"]
+        item["createTime"] = group["latest"]
         out.append(item)
     return out
 
@@ -426,22 +433,31 @@ def make_item(tag: str, msg: dict, text_limit: int, summary: str = "") -> dict:
         "where": "" if msg.get("chat_type") == "p2p" else (msg.get("chat_name") or "群"),
         "text": summary or clip(plain_text(msg), text_limit),
         "href": link_for(msg),
+        # 面板要按时间段（今天 / 昨天 / 更早）排，用它分桶；缺省时面板退化成
+        # 「更早」而不报错。
+        "createTime": msg.get("create_time") or "",
         # 面板上「让 agent 跟进」要用它去拉这条会话的上下文
         "chatId": msg.get("chat_id") or "",
         "messageId": msg.get("message_id") or "",
+        # 只在 --include-read 时有意义：True=已读，False=未读，缺省=未知
+        "read": msg.get("_read"),
     }
 
 
-def build_card(groups: dict[str, list[dict]], max_lines: int, text_limit: int):
-    """返回 (title, note, level, items)。行数据交给桌宠画。"""
+def build_card(groups: dict[str, list[dict]], max_lines: int, text_limit: int,
+               newest_first: bool = False):
+    """返回 (title, note, level, items)。行数据交给桌宠画。
+
+    newest_first 给浏览视图用：那是「谁最近找过我」的清单，新的在上；推给桌宠
+    的提醒卡片保持早的在上，因为它是一条先到先处理的队列。
+    """
     total = sum(len(v) for v in groups.values())
     counts = [f"{BUCKET_CN[b]} {len(groups[b])}" for b in BUCKETS if groups[b]]
     title = f"飞书 @你：{total} 条未读（{' · '.join(counts)}）"
 
-    # 先来的排前面：这是一条队列，先到先处理。create_time 是 "YYYY-MM-DD HH:MM"，
-    # 字典序就是时间序。
+    # create_time 是 "YYYY-MM-DD HH:MM"，字典序就是时间序。
     flat = [(BUCKET_TAG[b], m) for b in BUCKETS for m in groups[b]]
-    flat.sort(key=lambda pair: pair[1].get("create_time") or "")
+    flat.sort(key=lambda pair: pair[1].get("create_time") or "", reverse=newest_first)
     entries = [(tag, msg, "") for tag, msg in flat]
     grouped = group_by_chat(entries, text_limit)
     items = grouped[:max_lines]
@@ -769,6 +785,9 @@ def main() -> int:
     ap.add_argument("--no-dedupe", action="store_true", help="不查状态文件，推过的也再推")
     ap.add_argument("--no-push", action="store_true", help="只打印，不推桌宠，也不写状态")
     ap.add_argument("--json", action="store_true", help="把分好类的结果按 JSON 打到 stdout")
+    ap.add_argument("--board", action="store_true",
+                    help="完整视图：7 天内所有 @我/@all，已读未读都返回（不受白名单和"
+                         "24 小时提醒规则限制）")
     ap.add_argument("--context", metavar="CHAT_ID",
                     help="只输出该会话最近的消息（markdown），供「让 agent 跟进」使用")
     ap.add_argument("--context-limit", type=int, default=40, help="上下文最多几条（默认 40）")
@@ -845,6 +864,9 @@ def main() -> int:
     # 没必要的接口调用。
     def keep_message(msg: dict) -> tuple[bool, str]:
         age = age_minutes(msg)
+        if args.board:
+            # 浏览视图：提醒用的白名单/24 小时规则在这里不适用
+            return age <= allow_window, "超窗"
         if (msg.get("chat_type") or "") == "p2p":
             # 私聊：只要能拿到的未读，不设时间上限
             return age <= direct_window, "私聊超窗"
@@ -872,6 +894,19 @@ def main() -> int:
         detail = "、".join(f"{k} {v}" for k, v in reasons.items())
         print(f"[info] 丢弃 {sum(reasons.values())} 条（{detail}）；"
               f"保留 @all {kept_broadcast} 条", file=sys.stderr)
+
+    # --include-read 时也要查一次读状态：完整视图要把已读和未读分开显示，
+    # 而不是把两者都当成一条普通的行。
+    if args.board:
+        args.include_read = True
+
+    if messages and args.include_read:
+        try:
+            unread_set, _unres = unread_ids([m["message_id"] for m in messages])
+            for msg in messages:
+                msg["_read"] = msg["message_id"] not in unread_set
+        except (LarkError, subprocess.TimeoutExpired):
+            pass  # 查不出来就不标记，当作未知
 
     if messages and not args.include_read:
         try:
@@ -921,7 +956,7 @@ def main() -> int:
             ttl = args.ttl_seconds if args.ttl_seconds is not None else agent_ttl
         else:
             title, body, level, items, conversations = build_card(
-                groups, max_items, args.text_limit)
+                groups, max_items, args.text_limit, newest_first=bool(args.board))
         if truncated:
             # 「没有更多」不能当成「没有」：还有没翻完的页，卡片得说清楚。
             body = (body + chr(10) if body else "") + "…搜索还有未翻完的页"

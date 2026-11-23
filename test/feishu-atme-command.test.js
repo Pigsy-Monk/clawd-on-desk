@@ -29,7 +29,9 @@ const PAYLOAD = {
     ttl: 900,
     sticky: true,
     items: [
-      { tag: "回", who: "庄敏", where: "Shopping群", text: "问进度", href: "https://applink.feishu.cn/client/chat/open?openChatId=oc_1" },
+      { tag: "回", who: "庄敏", where: "Shopping群", text: "问进度",
+        href: "https://applink.feishu.cn/client/chat/open?openChatId=oc_1",
+        createTime: "2026-11-19 21:18" },
       { tag: "知", who: "方菊", where: "RCA群", text: "漏洞通知", href: "https://applink.feishu.cn/client/chat/open?openChatId=oc_2" },
     ],
   },
@@ -74,10 +76,12 @@ describe("feishu-atme-command", () => {
       where: "Shopping群",
       text: "问进度",
       href: "https://applink.feishu.cn/client/chat/open?openChatId=oc_1",
+      createTime: "2026-11-19 21:18",
       chatId: "",
       messageId: "",
       count: 1,
       messageIds: [],
+      read: null,
     });
   });
 
@@ -117,6 +121,29 @@ describe("feishu-atme-command", () => {
 
     assert.strictEqual(result.status, "ready");
     assert.deepStrictEqual(result.rows.map((r) => r.href), ["", ""]);
+  });
+
+  it("carries the message time, truncated to whole minutes, for the day buckets", async () => {
+    const payload = {
+      total: 2,
+      card: {
+        title: "t",
+        items: [
+          { tag: "回", text: "ok", createTime: "2026-11-19 21:18:07.000000" },
+          { tag: "回", text: "no time at all" },
+        ],
+      },
+    };
+    const { promise } = harness({
+      script: (child) => {
+        child.stdout.emit("data", JSON.stringify(payload));
+        child.emit("close", 0);
+      },
+    });
+
+    const result = await promise;
+
+    assert.deepStrictEqual(result.rows.map((r) => r.createTime), ["2026-11-19 21:18:07", ""]);
   });
 
   it("drops rows with no text but keeps the rest", async () => {

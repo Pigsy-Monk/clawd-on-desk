@@ -582,11 +582,22 @@ function createFeishuSection(rows, status, total, conversations) {
   // so ignoring one can reveal the next without a round trip.
   // Count from the true total, not from the rows in hand: 38 unread with 30 rows
   // fetched is still "30 more", and the panel must say so.
+  // "…另有 N 个会话" doubles as the way into the full board (read + unread).
+  // The board link is always there: with one or two conversations there is
+  // nothing hidden, and the rows are still worth browsing with read history.
   const hidden = Math.max(0, conversations - visible.length);
-  if (hidden > 0) {
+  {
     const more = document.createElement("div");
-    more.className = "feishu-more";
-    more.textContent = `…另有 ${hidden} 个会话`;
+    more.className = "feishu-more feishu-more-link";
+    more.textContent = hidden > 0 ? `${t("feishuAtmeMore")} · ${hidden}` : t("feishuAtmeMore");
+    more.title = t("feishuAtmeMore");
+    more.setAttribute("role", "button");
+    more.addEventListener("click", (event) => {
+      event.stopPropagation();
+      if (typeof window.sessionHudAPI.openFeishuBoard === "function") {
+        window.sessionHudAPI.openFeishuBoard();
+      }
+    });
     section.appendChild(more);
   }
   return section;

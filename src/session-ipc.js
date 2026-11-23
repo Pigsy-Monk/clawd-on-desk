@@ -44,6 +44,15 @@ function registerSessionIpc(options = {}) {
   const ignoreFeishuMessage = typeof options.ignoreFeishuMessage === "function"
     ? options.ignoreFeishuMessage
     : null;
+  const getFeishuBoard = typeof options.getFeishuBoard === "function"
+    ? options.getFeishuBoard
+    : null;
+  const takeDashboardInitialTab = typeof options.takeDashboardInitialTab === "function"
+    ? options.takeDashboardInitialTab
+    : null;
+  const openFeishuBoard = typeof options.openFeishuBoard === "function"
+    ? options.openFeishuBoard
+    : null;
   const getKimiQuotaStatus = requiredDependency(options.getKimiQuotaStatus, "getKimiQuotaStatus");
   const refreshKimiQuota = requiredDependency(options.refreshKimiQuota, "refreshKimiQuota");
   const getSessionHistory = requiredDependency(options.getSessionHistory, "getSessionHistory");
@@ -92,6 +101,9 @@ function registerSessionIpc(options = {}) {
   }
 
   handle("dashboard:get-snapshot", () => getSessionSnapshot());
+  // The Feishu board reads on demand (it is a browse view, not a cache).
+  if (getFeishuBoard) handle("dashboard:get-feishu-board", () => getFeishuBoard());
+  if (takeDashboardInitialTab) handle("dashboard:get-initial-tab", () => takeDashboardInitialTab());
   handle("dashboard:get-i18n", () => getI18n());
   // Dashboard gets a narrow, secret-free manual refresh capability. The API
   // key remains inside kimiQuotaRuntime, and only the real local Dashboard
@@ -269,6 +281,21 @@ function registerSessionIpc(options = {}) {
   }
   if (followUpFeishuChat) {
     on("session-hud:follow-up", (_event, payload) => {
+      if (payload && typeof payload === "object") followUpFeishuChat(payload);
+    });
+  }
+  if (openFeishuBoard) {
+    on("session-hud:open-feishu-board", () => openFeishuBoard());
+  }
+  // The Dashboard's Feishu tab offers the same two actions as the pet panel's
+  // rows, so it goes through the same two handlers rather than a copy.
+  if (openExternalLink) {
+    on("dashboard:open-link", (_event, href) => {
+      if (typeof href === "string" && href) openExternalLink(href);
+    });
+  }
+  if (followUpFeishuChat) {
+    on("dashboard:follow-up", (_event, payload) => {
       if (payload && typeof payload === "object") followUpFeishuChat(payload);
     });
   }

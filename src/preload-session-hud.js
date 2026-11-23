@@ -25,6 +25,7 @@ contextBridge.exposeInMainWorld("sessionHudAPI", {
   openLink: (href) => ipcRenderer.send("session-hud:open-link", typeof href === "string" ? href : ""),
   followUp: (payload) => ipcRenderer.send("session-hud:follow-up", payload && typeof payload === "object" ? payload : {}),
   ignore: (messageIds) => ipcRenderer.send("session-hud:ignore", Array.isArray(messageIds) ? messageIds : []),
+  openFeishuBoard: () => ipcRenderer.send("session-hud:open-feishu-board"),
   setPinned: (value) => ipcRenderer.send("session-hud:set-pinned", !!value),
   ackCompletion: (sessionId) => ipcRenderer.invoke("session:ack-completion", sessionId),
   onSessionSnapshot: (cb) => {

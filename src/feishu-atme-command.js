@@ -110,10 +110,16 @@ function normalizeRows(rawItems) {
       where: String(raw.where || "").slice(0, 40),
       text: text.slice(0, 300),
       href: safeHref(raw.href),
+      // "YYYY-MM-DD HH:MM" in the machine's own time, straight from the Feishu
+      // API. Kept as text: the panel compares it as calendar days, not as an
+      // instant, so no timezone parsing happens here.
+      createTime: String(raw.createTime || "").slice(0, 19),
       chatId: String(raw.chatId || "").slice(0, 64),
       messageId: String(raw.messageId || "").slice(0, 64),
       // One row per conversation: how many messages it stands for, and every id
       // it covers, so ignoring or handing off drops the whole conversation.
+      // true = read, false = unread, null = unknown (only the board sets it)
+      read: raw.read === true ? true : (raw.read === false ? false : null),
       count: Number.isInteger(raw.count) && raw.count > 0 ? raw.count : 1,
       messageIds: Array.isArray(raw.messageIds)
         ? raw.messageIds.filter((id) => typeof id === "string" && id).slice(0, 200)
@@ -191,7 +197,7 @@ function createFeishuAtmeCommand(options = {}) {
 
   const killTree = typeof options.killTreeImpl === "function" ? options.killTreeImpl : defaultKillTree;
 
-  function spawnOnce(bin, onSettled) {
+  function spawnOnce(bin, extra, onSettled) {
     const settled = {
       stdout: "", stderr: "", code: null, timedOut: false, overflow: false, spawnError: "",
     };
@@ -211,7 +217,7 @@ function createFeishuAtmeCommand(options = {}) {
       // re-read on every run, so tuning them does not need an app restart.
       child = spawnImpl(bin, [
         resolvedScriptPath, "--json", "--no-push", "--no-dedupe",
-        ...DEBUG_ARGS,
+        ...extra, ...DEBUG_ARGS,
       ], {
         windowsHide: true,
         env: childEnv(),
@@ -258,7 +264,11 @@ function createFeishuAtmeCommand(options = {}) {
     });
   }
 
-  function run() {
+  // The dashboard's full view: every @mention from the last week, with each row
+  // marked read or unread. It ignores the alerting rules (whitelist, 24h) on
+  // purpose — browsing is a different question from "does this need me now".
+  function run(extraArgs) {
+    const extra = Array.isArray(extraArgs) ? extraArgs : [];
     // A second click while the first is still talking to Feishu is not an error:
     // the callers already have the previous rows on screen.
     if (running) return Promise.resolve({ status: "busy" });
@@ -270,7 +280,7 @@ function createFeishuAtmeCommand(options = {}) {
     running = true;
 
     const attempt = (index) => new Promise((resolveAttempt) => {
-      spawnOnce(pythonBins[index], resolveAttempt);
+      spawnOnce(pythonBins[index], extra, resolveAttempt);
     }).then((out) => {
       // Only an interpreter that does not exist warrants the next candidate; a
       // skill that ran and failed speaks for itself.
@@ -324,7 +334,11 @@ function createFeishuAtmeCommand(options = {}) {
     }).catch((err) => settle("failed", { reason: trimReason(err && err.message) }));
   }
 
-  return { run, scriptPath: resolvedScriptPath };
+  return {
+    run,
+    runBoard: () => run(["--board", "--max-items", "100"]),
+    scriptPath: resolvedScriptPath,
+  };
 }
 
 module.exports = {

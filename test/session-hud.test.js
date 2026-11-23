@@ -8,6 +8,7 @@ const {
   computeSessionHudBounds,
   computeHudLayout,
   computeHudHeight,
+  feishuSectionHeightRows,
   getHudWidth,
   getHudWidthScale,
   computeHudOuterWidth,
@@ -716,5 +717,41 @@ describe("session HUD v5 three-state runtime contracts (source-level)", () => {
       /function showQuotaRing\(win\)\s*\{[\s\S]*?cancelHiddenDestroy\("ring"\)/.test(src),
       "showing the ring should cancel only the ring cleanup"
     );
+  });
+});
+
+// The Feishu block is not a whole number of 28px rows: a 20px header, the rows,
+// a small "more" line, 4px padding, a 1px rule and 4px margin. Sizing the window
+// as "n + 1 rows" clipped the panel's bottom line (a session row, or the fold
+// row) — the bug this pins down.
+describe("session HUD Feishu section height", () => {
+  const PAGE_HEADER_PX = 20;
+  const PAGE_MORE_PX = 13;
+  const PAGE_CHROME_PX = 4 + 1 + 4;
+  const ROW_PX = constants.HUD_ROW_HEIGHT;
+
+  function pageHeightFor(rowCount, status) {
+    const rows = rowCount > 0 ? Math.min(rowCount, 8) : 1;
+    return rows * ROW_PX + PAGE_HEADER_PX + PAGE_MORE_PX + PAGE_CHROME_PX;
+  }
+
+  it("books enough height for the header, the rows and the more line", () => {
+    for (const [count, status] of [[0, "empty"], [0, "failed"], [0, "missing"], [1, "ready"], [5, "ready"], [12, "ready"], [8, "ready"]]) {
+      const rows = feishuSectionHeightRows(count, status);
+      const allocated = computeHudHeight(rows);
+      assert.ok(
+        allocated + constants.HUD_BORDER_Y >= pageHeightFor(count, status),
+        `${count} rows / ${status}: ${allocated}px must cover ${pageHeightFor(count, status)}px`
+      );
+    }
+  });
+
+  it("contributes nothing before the first digest run", () => {
+    assert.strictEqual(feishuSectionHeightRows(0, "idle"), 0);
+    assert.strictEqual(feishuSectionHeightRows(0, ""), 0);
+  });
+
+  it("stops growing at the renderer's eight-row cap", () => {
+    assert.strictEqual(feishuSectionHeightRows(8, "ready"), feishuSectionHeightRows(40, "ready"));
   });
 });

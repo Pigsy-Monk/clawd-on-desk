@@ -2235,12 +2235,16 @@ function render(options = {}) {
 // the Notices tab cannot be selected while one is running.
 const tabsEl = document.getElementById("dashboardTabs");
 const tabSessionsEl = document.getElementById("tabSessions");
+const tabFeishuEl = document.getElementById("tabFeishu");
 const tabNoticesEl = document.getElementById("tabNotices");
+const feishuPanelEl = document.getElementById("feishuPanel");
+const feishuBoardStatusEl = document.getElementById("feishuBoardStatus");
+const feishuBoardBodyEl = document.getElementById("feishuBoardBody");
 const noticesPanelEl = document.getElementById("noticesPanel");
 const noticesStatusEl = document.getElementById("noticesStatus");
 const noticesBodyEl = document.getElementById("noticesBody");
 
-const DASHBOARD_TABS = ["sessions", "notices"];
+const DASHBOARD_TABS = ["sessions", "feishu", "notices"];
 const NOTICE_LEVELS = ["info", "success", "warn", "error"];
 const NOTICE_LEVEL_LABEL_KEYS = {
   info: "dashboardNoticesLevelInfo",
@@ -2288,7 +2292,7 @@ function selectDashboardTab(name, options = {}) {
     sessionsScrollTop = contentEl.scrollTop || 0;
   }
   activeDashboardTab = name;
-  const tabs = [[tabSessionsEl, "sessions"], [tabNoticesEl, "notices"]];
+  const tabs = [[tabSessionsEl, "sessions"], [tabFeishuEl, "feishu"], [tabNoticesEl, "notices"]];
   for (const [el, tabName] of tabs) {
     if (!el) continue;
     const selected = tabName === name;
@@ -2296,15 +2300,22 @@ function selectDashboardTab(name, options = {}) {
     el.setAttribute("tabindex", selected ? "0" : "-1");
   }
   if (contentEl) contentEl.hidden = name !== "sessions";
+  if (feishuPanelEl) feishuPanelEl.hidden = name !== "feishu";
   if (noticesPanelEl) noticesPanelEl.hidden = name !== "notices";
   if (options.focus) {
-    const target = name === "sessions" ? tabSessionsEl : tabNoticesEl;
+    const target = name === "sessions"
+      ? tabSessionsEl
+      : (name === "feishu" ? tabFeishuEl : tabNoticesEl);
     if (target && typeof target.focus === "function") target.focus();
   }
   if (previous === name) return;
   if (name === "sessions") {
     // A scroller hidden with display:none can come back at 0.
     if (contentEl && sessionsScrollTop) contentEl.scrollTop = sessionsScrollTop;
+    return;
+  }
+  if (name === "feishu") {
+    void renderFeishuBoard();
     return;
   }
   renderNotices();
@@ -2331,7 +2342,204 @@ function handleDashboardTabKeydown(event) {
 function renderDashboardTabLabels() {
   if (tabsEl) tabsEl.setAttribute("aria-label", t("dashboardTabsLabel"));
   if (tabSessionsEl) tabSessionsEl.textContent = t("dashboardTabSessions");
+  if (tabFeishuEl) tabFeishuEl.textContent = t("dashboardTabFeishu");
   if (tabNoticesEl) tabNoticesEl.textContent = t("dashboardTabNotices");
+}
+
+// The Feishu board: every @mention from the last week, split into what is still
+// waiting and what is already dealt with, then into time windows inside each.
+// It is a browse view, so it reads on demand instead of showing a cache.
+let feishuBoardPending = false;
+
+// "YYYY-MM-DD HH:MM" from the Feishu API, already in the machine's own time.
+// Parsed by hand: Date's string parsing reads the space-separated form in
+// inconsistent timezones, which would put "today" off by one near midnight.
+function feishuTimestamp(row) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/.exec(String(row.createTime || ""));
+  if (!match) return null;
+  return new Date(
+    Number(match[1]), Number(match[2]) - 1, Number(match[3]),
+    Number(match[4]), Number(match[5]),
+  );
+}
+
+function feishuTimeWindow(date, now) {
+  if (!date) return "earlier";
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const yesterdayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+  if (date >= todayStart) return "today";
+  if (date >= yesterdayStart) return "yesterday";
+  return "earlier";
+}
+
+function pad2(value) {
+  return String(value).padStart(2, "0");
+}
+
+// The row's own clock: a bare time for today, a labelled one for yesterday, and
+// a date for anything older. "更早" never needs a year — the board only spans
+// seven days.
+function feishuTimeLabel(date, now) {
+  if (!date) return "";
+  const clock = `${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
+  const window = feishuTimeWindow(date, now);
+  if (window === "today") return clock;
+  if (window === "yesterday") return `${t("feishuBoardYesterday")} ${clock}`;
+  return `${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+}
+
+function feishuRowNode(row) {
+  const api = window.dashboardAPI || {};
+  const openable = !!row.href && typeof api.openLink === "function";
+
+  const item = document.createElement("div");
+  item.className = openable ? "feishu-board-row is-openable" : "feishu-board-row";
+
+  const tag = document.createElement("span");
+  tag.className = "feishu-board-tag";
+  tag.dataset.kind = row.tag || "";
+  tag.textContent = row.tag || "·";
+  item.appendChild(tag);
+
+  const who = document.createElement("span");
+  who.className = "feishu-board-who";
+  who.textContent = row.where ? `${row.who}@${row.where}` : row.who;
+  item.appendChild(who);
+
+  const text = document.createElement("span");
+  text.className = "feishu-board-text";
+  text.textContent = row.text || "";
+  item.appendChild(text);
+
+  if (Number.isInteger(row.count) && row.count > 1) {
+    const many = document.createElement("span");
+    many.className = "feishu-board-count";
+    many.textContent = `×${row.count}`;
+    item.appendChild(many);
+  }
+
+  const when = feishuTimestamp(row);
+  if (when) {
+    const time = document.createElement("span");
+    time.className = "feishu-board-time";
+    time.textContent = feishuTimeLabel(when, new Date());
+    item.appendChild(time);
+  }
+
+  if (openable) {
+    item.setAttribute("role", "button");
+    item.tabIndex = 0;
+    const open = () => api.openLink(row.href);
+    item.addEventListener("click", open);
+    item.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        open();
+      }
+    });
+  }
+
+  // The same hand-off the pet panel's rows carry: a fresh Claude session reads
+  // the conversation and drafts a reply, without sending anything.
+  if (row.chatId && typeof api.followUpFeishu === "function") {
+    const go = document.createElement("span");
+    go.className = "feishu-board-go";
+    go.textContent = "🤖";
+    go.title = t("feishuAtmeFollowUp");
+    go.setAttribute("role", "button");
+    go.addEventListener("click", (event) => {
+      event.stopPropagation();
+      // Handed off: it is being dealt with, so it leaves this list.
+      item.remove();
+      api.followUpFeishu({
+        chatId: row.chatId,
+        messageId: row.messageId,
+        messageIds: Array.isArray(row.messageIds) ? row.messageIds : [],
+        who: row.who,
+        where: row.where,
+        text: row.text,
+      });
+    });
+    go.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        event.stopPropagation();
+        go.click();
+      }
+    });
+    go.tabIndex = 0;
+    item.appendChild(go);
+  }
+  return item;
+}
+
+const FEISHU_TIME_WINDOWS = ["today", "yesterday", "earlier"];
+const FEISHU_WINDOW_KEY = {
+  today: "feishuBoardToday",
+  yesterday: "feishuBoardYesterday",
+  earlier: "feishuBoardEarlier",
+};
+
+async function renderFeishuBoard() {
+  if (!feishuBoardBodyEl || feishuBoardPending) return;
+  const api = window.dashboardAPI;
+  if (!api || typeof api.getFeishuBoard !== "function") return;
+  feishuBoardPending = true;
+  if (feishuBoardStatusEl) feishuBoardStatusEl.textContent = t("feishuBoardLoading");
+  try {
+    const result = await api.getFeishuBoard();
+    const rows = result && Array.isArray(result.rows) ? result.rows : [];
+    const unread = rows.filter((row) => row.read === false);
+    const read = rows.filter((row) => row.read !== false);
+    feishuBoardBodyEl.replaceChildren();
+    const now = new Date();
+
+    const section = (titleKey, list) => {
+      const heading = document.createElement("h3");
+      heading.className = "feishu-board-heading";
+      heading.textContent = `${t(titleKey)} · ${list.length}`;
+      feishuBoardBodyEl.appendChild(heading);
+      if (!list.length) {
+        const empty = document.createElement("p");
+        empty.className = "feishu-board-empty";
+        empty.textContent = t("feishuBoardEmpty");
+        feishuBoardBodyEl.appendChild(empty);
+        return;
+      }
+      // Newest first, undated rows last: the board answers "who wrote to me
+      // recently", so the top of the list is the freshest thing.
+      const sorted = list.slice().sort((a, b) => {
+        const at = feishuTimestamp(a);
+        const bt = feishuTimestamp(b);
+        return (bt ? bt.getTime() : -Infinity) - (at ? at.getTime() : -Infinity);
+      });
+      const buckets = new Map(FEISHU_TIME_WINDOWS.map((key) => [key, []]));
+      for (const row of sorted) {
+        buckets.get(feishuTimeWindow(feishuTimestamp(row), now)).push(row);
+      }
+      for (const key of FEISHU_TIME_WINDOWS) {
+        const bucketRows = buckets.get(key);
+        if (!bucketRows.length) continue;
+        const subheading = document.createElement("div");
+        subheading.className = "feishu-board-subheading";
+        subheading.textContent = `${t(FEISHU_WINDOW_KEY[key])} · ${bucketRows.length}`;
+        feishuBoardBodyEl.appendChild(subheading);
+        for (const row of bucketRows) feishuBoardBodyEl.appendChild(feishuRowNode(row));
+      }
+    };
+    section("feishuBoardUnread", unread);
+    section("feishuBoardRead", read);
+
+    if (feishuBoardStatusEl) {
+      feishuBoardStatusEl.textContent = result && result.status !== "ready"
+        ? t("feishuBoardFailed")
+        : "";
+    }
+  } catch {
+    if (feishuBoardStatusEl) feishuBoardStatusEl.textContent = t("feishuBoardFailed");
+  } finally {
+    feishuBoardPending = false;
+  }
 }
 
 function normalizeNoticeHistory(result) {
@@ -2719,6 +2927,17 @@ function createNoticesOlderButton() {
   return button;
 }
 
+async function applyInitialDashboardTab() {
+  const api = window.dashboardAPI;
+  if (!api || typeof api.getInitialTab !== "function") return;
+  try {
+    const name = await api.getInitialTab();
+    if (name && DASHBOARD_TABS.includes(name) && name !== activeDashboardTab) {
+      selectDashboardTab(name);
+    }
+  } catch {}
+}
+
 function initDashboardTabs() {
   const api = window.dashboardAPI;
   // An older main without notice history: the tab bar stays hidden and the
@@ -2729,6 +2948,7 @@ function initDashboardTabs() {
     tabSessionsEl.addEventListener("click", () => selectDashboardTab("sessions"));
   }
   if (tabNoticesEl && typeof tabNoticesEl.addEventListener === "function") {
+    tabFeishuEl.addEventListener("click", () => selectDashboardTab("feishu"));
     tabNoticesEl.addEventListener("click", () => selectDashboardTab("notices"));
   }
   if (typeof tabsEl.addEventListener === "function") {
@@ -2747,12 +2967,14 @@ function initDashboardTabs() {
 
 async function init() {
   initDashboardTabs();
+  void applyInitialDashboardTab();
   window.dashboardAPI.onLangChange((payload) => {
     i18nPayload = payload || i18nPayload;
     render();
     syncKimiQuotaRefreshControl();
     renderDashboardTabLabels();
     if (activeDashboardTab === "notices") renderNotices();
+    if (activeDashboardTab === "feishu") void renderFeishuBoard();
   });
   window.dashboardAPI.onSessionSnapshot((nextSnapshot) => {
     const hadKimiQuota = snapshotHasKimiQuota(snapshot);

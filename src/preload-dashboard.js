@@ -70,6 +70,13 @@ const quickModeApi = QUICK_MODE_SUPPORTED ? {
 
 contextBridge.exposeInMainWorld("dashboardAPI", {
   getSnapshot: () => ipcRenderer.invoke("dashboard:get-snapshot"),
+  getFeishuBoard: () => ipcRenderer.invoke("dashboard:get-feishu-board"),
+  // The two actions a Feishu board row offers. Both are validated in main: the
+  // link by scheme, the hand-off by chatId — the renderer only forwards them.
+  openLink: (href) => ipcRenderer.send("dashboard:open-link", typeof href === "string" ? href : ""),
+  followUpFeishu: (payload) =>
+    ipcRenderer.send("dashboard:follow-up", payload && typeof payload === "object" ? payload : {}),
+  getInitialTab: () => ipcRenderer.invoke("dashboard:get-initial-tab"),
   getI18n: () => ipcRenderer.invoke("dashboard:get-i18n"),
   getKimiQuotaStatus: () => ipcRenderer.invoke("dashboard:get-kimi-quota-status"),
   refreshKimiQuota: () => ipcRenderer.invoke("dashboard:refresh-kimi-quota"),

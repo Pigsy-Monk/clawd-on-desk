@@ -5840,6 +5840,15 @@ function feishuConfig() {
   }
 }
 
+// The dashboard opens on whichever tab asked for it. Consumed once so a later
+// plain open lands on Sessions again.
+let pendingDashboardTab = null;
+
+function openFeishuBoard() {
+  pendingDashboardTab = "feishu";
+  showDashboard({ source: "feishu" });
+}
+
 function feishuFollowUpWorktree() {
   if (process.env.FEISHU_FOLLOWUP_WORKTREE) return process.env.FEISHU_FOLLOWUP_WORKTREE;
   const config = feishuConfig();
@@ -5973,6 +5982,13 @@ registerSessionIpc({
   // re-checked here before the OS browser sees it.
   followUpFeishuChat: (payload) => followUpFeishuChat(payload),
   ignoreFeishuMessage: (messageId) => ignoreFeishuMessage(messageId),
+  getFeishuBoard: () => feishuAtmeCommand.runBoard(),
+  openFeishuBoard: () => openFeishuBoard(),
+  takeDashboardInitialTab: () => {
+    const tab = pendingDashboardTab;
+    pendingDashboardTab = null;
+    return tab;
+  },
   openExternalLink: (href) => {
     try {
       const url = new URL(href);
